@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# Amazon Hybrid RecSys - central configuration
+# Switch dataset by changing `active_dataset` (no code changes needed).
+# ---------------------------------------------------------------------------
+
+# Base URL for the Amazon Reviews 2023 raw files (McAuley Lab).
+# Review files live under /review_categories, metadata under /meta_categories.
+# If a download 404s, verify the base URL against:
+#   https://amazon-reviews-2023.github.io/
+amazon_base_url: "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_2023/raw"
+
+raw_dir: "data/raw"
+processed_dir: "data/processed"
+
+# Which dataset the pipeline currently operates on.
+active_dataset: "video_games"
+
+datasets:
+  digital_music:
+    category: "Digital_Music"   # small / very sparse -> stresses content-based & cold-start
+  video_games:
+    category: "Video_Games"     # medium / denser -> good for collaborative filtering
+
+preprocessing:
+  k_core: 5                # keep users & items with >= k interactions
+  min_rating_relevant: 4.0 # rating >= this counts as "relevant" for Precision/Recall@K
+  test_size: 0.2
+  random_seed: 42
+
+evaluation:
+  k: 10                    # the K in Precision@K / Recall@K / F1@K
+
+hybrid:
+  alpha: 0.5               # weighted hybrid: alpha*CF + (1-alpha)*content

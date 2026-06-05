@@ -1,0 +1,35 @@
+# --- Data (never commit raw/processed datasets) ---
+/data/
+*.jsonl
+*.jsonl.gz
+*.json.gz
+*.csv
+!experiments/results.csv
+
+# --- Models / artifacts ---
+/models/
+*.pkl
+*.joblib
+*.npz
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.python-version
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- Tooling / OS ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+.idea/
+.vscode/
+
+# --- Internal docs / agent files (not for submission) ---
+docs/
+CLAUDE.md
