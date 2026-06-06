@@ -2,6 +2,7 @@
 numpy
 pandas
 scipy
+pyarrow                # Parquet artifacts for processed data
 pyyaml
 tqdm
 requests
