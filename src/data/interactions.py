@@ -56,3 +56,34 @@ def apply_k_core(df, k):
         if len(filtered) == len(current):
             return filtered.reset_index(drop=True)
         current = filtered
+
+
+def split_per_user(df, test_size, random_seed, chronological=True):
+    """Split each user's interactions into (train, test).
+
+    When timestamps are present, the latest ``test_size`` fraction is held out
+    (chronological holdout); otherwise a seeded random per-user split is used.
+    Every user with >= 2 interactions gets at least one train and one test row.
+    """
+    rng = np.random.default_rng(random_seed)
+    train_parts, test_parts = [], []
+    for _, group in df.groupby("user_id", sort=True):
+        n = len(group)
+        if n < 2:
+            train_parts.append(group)
+            continue
+        n_test = min(max(1, round(test_size * n)), n - 1)
+        if chronological and group["timestamp"].notna().all():
+            ordered = group.sort_values("timestamp", kind="stable")
+        else:
+            ordered = group.iloc[rng.permutation(n)]
+        test_parts.append(ordered.iloc[-n_test:])
+        train_parts.append(ordered.iloc[:-n_test])
+
+    train = pd.concat(train_parts).reset_index(drop=True)
+    test = (
+        pd.concat(test_parts).reset_index(drop=True)
+        if test_parts
+        else df.iloc[0:0].copy()
+    )
+    return train, test

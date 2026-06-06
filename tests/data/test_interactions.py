@@ -70,3 +70,32 @@ def test_apply_k_core_keeps_a_set_that_already_satisfies_k():
     )
 
     assert len(apply_k_core(df, k=2)) == 4
+
+
+from src.data.interactions import split_per_user
+
+
+def test_split_per_user_holds_out_latest_no_leakage_reproducible():
+    rows = []
+    for user in ["u1", "u2"]:
+        for t in range(1, 6):  # 5 interactions each, increasing timestamp
+            rows.append(
+                {"user_id": user, "parent_asin": f"{user}_i{t}",
+                 "rating": 5.0, "timestamp": t}
+            )
+    df = pd.DataFrame(rows)
+
+    train, test = split_per_user(df, test_size=0.2, random_seed=42)
+
+    # 0.2 * 5 = 1 held out per user (the latest), 4 train each
+    assert len(train) == 8 and len(test) == 2
+    assert set(test["parent_asin"]) == {"u1_i5", "u2_i5"}  # chronological holdout
+    # every test user appears in train
+    assert set(test["user_id"]) <= set(train["user_id"])
+    # no (user, item) pair leaks across train/test
+    train_pairs = set(zip(train["user_id"], train["parent_asin"]))
+    test_pairs = set(zip(test["user_id"], test["parent_asin"]))
+    assert train_pairs.isdisjoint(test_pairs)
+    # reproducible
+    train2, test2 = split_per_user(df, test_size=0.2, random_seed=42)
+    assert test2.equals(test)
