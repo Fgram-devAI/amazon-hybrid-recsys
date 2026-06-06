@@ -39,3 +39,20 @@ def deduplicate_interactions(df):
     ordered = df.sort_values("timestamp", kind="stable", na_position="first")
     deduped = ordered.drop_duplicates(subset=["user_id", "parent_asin"], keep="last")
     return deduped.reset_index(drop=True)
+
+
+def apply_k_core(df, k):
+    """Iteratively keep users and items with >= k interactions until both hold."""
+    current = df
+    while True:
+        user_counts = current["user_id"].value_counts()
+        item_counts = current["parent_asin"].value_counts()
+        keep_users = user_counts[user_counts >= k].index
+        keep_items = item_counts[item_counts >= k].index
+        filtered = current[
+            current["user_id"].isin(keep_users)
+            & current["parent_asin"].isin(keep_items)
+        ]
+        if len(filtered) == len(current):
+            return filtered.reset_index(drop=True)
+        current = filtered
