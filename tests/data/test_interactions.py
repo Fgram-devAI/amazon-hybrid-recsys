@@ -2,7 +2,12 @@
 
 import pandas as pd
 
-from src.data.interactions import load_interactions
+from src.data.interactions import (
+    apply_k_core,
+    deduplicate_interactions,
+    load_interactions,
+    split_per_user,
+)
 
 
 def test_load_interactions_drops_invalid_and_counts_raw():
@@ -21,9 +26,6 @@ def test_load_interactions_drops_invalid_and_counts_raw():
     assert df["rating"].tolist() == [5.0, 4.0]
 
 
-from src.data.interactions import deduplicate_interactions
-
-
 def test_deduplicate_keeps_latest_interaction_per_user_item():
     df = pd.DataFrame(
         [
@@ -38,9 +40,6 @@ def test_deduplicate_keeps_latest_interaction_per_user_item():
     assert len(out) == 2
     kept = out[(out["user_id"] == "u1") & (out["parent_asin"] == "i1")]
     assert kept["rating"].iloc[0] == 5.0  # latest by timestamp
-
-
-from src.data.interactions import apply_k_core
 
 
 def test_apply_k_core_is_iterative_and_cascades():
@@ -70,9 +69,6 @@ def test_apply_k_core_keeps_a_set_that_already_satisfies_k():
     )
 
     assert len(apply_k_core(df, k=2)) == 4
-
-
-from src.data.interactions import split_per_user
 
 
 def test_split_per_user_holds_out_latest_no_leakage_reproducible():

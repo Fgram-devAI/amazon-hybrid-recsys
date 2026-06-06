@@ -19,3 +19,6 @@ seaborn
 
 # Dev
 pytest
+ruff                   # linter + formatter (quality gate)
+pyright                # static type checker (quality gate)
+pandas-stubs           # accurate pandas type stubs (clean pyright on DataFrame ops)
