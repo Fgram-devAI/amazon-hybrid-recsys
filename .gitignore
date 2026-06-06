@@ -33,3 +33,4 @@ env/
 # --- Internal docs / agent files (not for submission) ---
 docs/
 CLAUDE.md
+.claude/

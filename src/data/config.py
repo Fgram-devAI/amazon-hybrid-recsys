@@ -16,3 +16,15 @@ def active_dataset_category(config: dict[str, Any]) -> str:
     """Return the Amazon category name for the currently active dataset."""
     active = config["active_dataset"]
     return config["datasets"][active]["category"]
+
+
+def dataset_k_core(config: dict[str, Any]) -> int:
+    """k-core threshold for the active dataset, with per-dataset override.
+
+    Sparse categories (e.g. Digital_Music) need a lower core than the global
+    default, so a dataset may set its own ``k_core``; otherwise the global
+    ``preprocessing.k_core`` applies.
+    """
+    active = config["active_dataset"]
+    dataset = config["datasets"][active]
+    return dataset.get("k_core", config["preprocessing"]["k_core"])

@@ -18,14 +18,30 @@ The **hybrid** fuses both so each covers the other's weakness. This project impl
 
 ## Datasets
 
-Two categories from Amazon Reviews 2023, chosen for contrast:
+Amazon Reviews 2023 categories are config-driven. The current dataset roles are:
 
-| Category | Density | Highlights |
+| Category | Role | Notes |
 |---|---|---|
-| `Video_Games` | denser | collaborative filtering strengths |
-| `Digital_Music` | sparse | content-based / cold-start strengths |
+| `Video_Games` | primary benchmark | true 5-core: 814,586 interactions, 94,762 users, 25,612 items |
+| `Movies_and_TV` | second benchmark | true 5-core: 7,441,129 interactions, 657,203 users, 197,943 items |
+| `Digital_Music` | sparsity/cold-start case study | strict 5-core empties it; even 2-core leaves only a tiny evaluable core |
 
 Switch the active dataset in [`config/config.yaml`](config/config.yaml) — no code changes needed. Raw data is downloaded locally and is **not** committed.
+
+Download a configured dataset with:
+
+```bash
+python -m src.data.fetch --dataset movies_and_tv
+```
+
+Then validate how much survives preprocessing:
+
+```bash
+python -m src.data.preprocess --dataset movies_and_tv
+```
+
+Processed artifacts are stored as Parquet plus an EDA JSON summary under `data/processed/<dataset>/`.
+Raw and processed data are reproducible local artifacts and are not committed.
 
 ## Models
 
@@ -41,7 +57,7 @@ All models share one interface — `fit`, `predict(user, item)`, `recommend(user
 
 ## Evaluation
 
-Every model is evaluated on both datasets with:
+Every benchmark model is evaluated on the main benchmark datasets with:
 
 - **RMSE** / **MAE** — rating-prediction accuracy
 - **Precision@K** / **Recall@K** / **F1@K** — top-K ranking quality (relevant = rating ≥ 4)
@@ -49,7 +65,7 @@ Every model is evaluated on both datasets with:
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, full evaluation, Streamlit app.
-- **Phase 2** — GraphSAGE hybrid (PyTorch Geometric) added as a fifth model.
+- **Phase 2** — GraphSAGE hybrid (PyTorch Geometric) added as a fifth model in the main implementation.
 - **Phase 3** — Neo4j graph store + LightRAG (Claude) for explainable, conversational recommendations.
 
 ## Project structure
@@ -77,3 +93,5 @@ pip install -r requirements.txt
 ## Status
 
 🚧 In active development — Phase 1.
+
+Current dataset finding: `Video_Games` and `Movies_and_TV` both survive strict 5-core filtering and are the main benchmark datasets. `Digital_Music` is too sparse for the main full-model comparison because 5-core filtering removes it entirely; it remains useful as a cold-start/sparsity analysis case.
