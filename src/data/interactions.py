@@ -80,7 +80,11 @@ def split_per_user(df, test_size, random_seed, chronological=True):
         test_parts.append(ordered.iloc[-n_test:])
         train_parts.append(ordered.iloc[:-n_test])
 
-    train = pd.concat(train_parts).reset_index(drop=True)
+    train = (
+        pd.concat(train_parts).reset_index(drop=True)
+        if train_parts
+        else df.iloc[0:0].copy()
+    )
     test = (
         pd.concat(test_parts).reset_index(drop=True)
         if test_parts

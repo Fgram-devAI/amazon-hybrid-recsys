@@ -99,3 +99,11 @@ def test_split_per_user_holds_out_latest_no_leakage_reproducible():
     # reproducible
     train2, test2 = split_per_user(df, test_size=0.2, random_seed=42)
     assert test2.equals(test)
+
+
+def test_split_per_user_handles_empty_input():
+    empty = pd.DataFrame(columns=["user_id", "parent_asin", "rating", "timestamp"])
+
+    train, test = split_per_user(empty, test_size=0.2, random_seed=42)
+
+    assert len(train) == 0 and len(test) == 0
