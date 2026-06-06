@@ -18,14 +18,27 @@ The **hybrid** fuses both so each covers the other's weakness. This project impl
 
 ## Datasets
 
-Two categories from Amazon Reviews 2023, chosen for contrast:
+Amazon Reviews 2023 categories are config-driven. The current dataset roles are:
 
-| Category | Density | Highlights |
+| Category | Role | Notes |
 |---|---|---|
-| `Video_Games` | denser | collaborative filtering strengths |
-| `Digital_Music` | sparse | content-based / cold-start strengths |
+| `Video_Games` | primary benchmark | true 5-core survives well; good for CF and hybrid evaluation |
+| `Movies_and_TV` | candidate second benchmark | added to config; fetch and validate 5-core survival before adopting |
+| `Digital_Music` | sparsity/cold-start case study | strict 5-core empties it; even 2-core leaves only a tiny evaluable core |
 
 Switch the active dataset in [`config/config.yaml`](config/config.yaml) — no code changes needed. Raw data is downloaded locally and is **not** committed.
+
+Download a configured dataset with:
+
+```bash
+python -m src.data.fetch --dataset movies_and_tv
+```
+
+Then validate how much survives preprocessing:
+
+```bash
+python -m src.data.preprocess --dataset movies_and_tv
+```
 
 ## Models
 
@@ -41,7 +54,7 @@ All models share one interface — `fit`, `predict(user, item)`, `recommend(user
 
 ## Evaluation
 
-Every model is evaluated on both datasets with:
+Every benchmark model is evaluated on the main benchmark datasets with:
 
 - **RMSE** / **MAE** — rating-prediction accuracy
 - **Precision@K** / **Recall@K** / **F1@K** — top-K ranking quality (relevant = rating ≥ 4)
@@ -49,7 +62,7 @@ Every model is evaluated on both datasets with:
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, full evaluation, Streamlit app.
-- **Phase 2** — GraphSAGE hybrid (PyTorch Geometric) added as a fifth model.
+- **Phase 2** — GraphSAGE hybrid (PyTorch Geometric) added as a fifth model in the main implementation.
 - **Phase 3** — Neo4j graph store + LightRAG (Claude) for explainable, conversational recommendations.
 
 ## Project structure
@@ -77,3 +90,5 @@ pip install -r requirements.txt
 ## Status
 
 🚧 In active development — Phase 1.
+
+Current dataset finding: `Digital_Music` is too sparse for the main full-model comparison because 5-core filtering removes it entirely. It remains useful as a cold-start/sparsity analysis case; `Movies_and_TV` is being tested as a stronger second benchmark candidate.

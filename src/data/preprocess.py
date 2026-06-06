@@ -40,7 +40,8 @@ def preprocess_dataset(config, *, limit=None):
     interactions, raw_count = load_interactions(read_jsonl_gz(review_path, limit=limit))
     valid_count = len(interactions)
     deduped = deduplicate_interactions(interactions)
-    kcore = apply_k_core(deduped, dataset_k_core(config))
+    k_core = dataset_k_core(config)
+    kcore = apply_k_core(deduped, k_core)
     train, test = split_per_user(kcore, pp["test_size"], pp["random_seed"])
 
     metadata = prepare_metadata(read_jsonl_gz(meta_path, limit=limit))
@@ -50,6 +51,7 @@ def preprocess_dataset(config, *, limit=None):
     summary = summarize_eda(
         raw_count, valid_count, deduped, kcore, train, test, pp["min_rating_relevant"]
     )
+    summary["k_core_applied"] = k_core
     summary["test_items_not_in_train"] = _test_items_not_in_train(train, test)
     summary["metadata_items"] = len(metadata)
     summary["metadata_missingness"] = {

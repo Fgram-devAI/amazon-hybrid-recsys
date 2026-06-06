@@ -35,3 +35,10 @@ def test_prepare_metadata_builds_text_blob_and_missing_flags():
     assert bool(a2["price_missing"]) is True
     assert bool(a2["average_rating_missing"]) is True
     assert bool(a2["rating_number_missing"]) is True
+
+
+def test_prepare_metadata_empty_keeps_stable_schema():
+    # no records -> still a frame with the expected columns (no downstream KeyError)
+    df = prepare_metadata(iter([]))
+    assert len(df) == 0
+    assert "parent_asin" in df.columns

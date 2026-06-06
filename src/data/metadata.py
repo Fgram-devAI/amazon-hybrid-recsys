@@ -11,6 +11,21 @@ import pandas as pd
 
 _HTML_TAG = re.compile(r"<[^>]+>")
 
+_METADATA_COLUMNS = [
+    "parent_asin",
+    "title",
+    "description",
+    "text",
+    "categories",
+    "store",
+    "price",
+    "price_missing",
+    "average_rating",
+    "average_rating_missing",
+    "rating_number",
+    "rating_number_missing",
+]
+
 
 def _join_text(value):
     """Coerce a text field that may be None, a string, or a list of strings."""
@@ -71,4 +86,5 @@ def prepare_metadata(records):
                 "rating_number_missing": rating_number is None,
             }
         )
-    return pd.DataFrame(rows).reset_index(drop=True)
+    # explicit columns keep the schema stable even when no rows are produced
+    return pd.DataFrame(rows, columns=_METADATA_COLUMNS).reset_index(drop=True)

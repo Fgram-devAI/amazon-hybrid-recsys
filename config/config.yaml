@@ -17,8 +17,11 @@ active_dataset: "video_games"
 
 datasets:
   digital_music:
-    category: "Digital_Music"   # small / very sparse -> stresses content-based & cold-start
-    k_core: 2                   # 5-core empties this category; 2-core keeps a usable sparse set
+    category: "Digital_Music"   # extreme sparse/cold-start case study; not a main CF benchmark
+    k_core: 2                   # 5-core empties this category; 2-core keeps a tiny sparse core
+  movies_and_tv:
+    category: "Movies_and_TV"   # candidate second benchmark; validate 5-core survival after fetch
+    # k_core omitted -> inherits the global preprocessing.k_core (5)
   video_games:
     category: "Video_Games"     # medium / denser -> good for collaborative filtering
     # k_core omitted -> inherits the global preprocessing.k_core (5)
