@@ -15,3 +15,13 @@ def test_streams_records_and_honours_limit(tmp_path):
 
     assert list(read_jsonl_gz(path)) == rows
     assert list(read_jsonl_gz(path, limit=1)) == rows[:1]
+
+
+def test_reads_plain_uncompressed_jsonl(tmp_path):
+    # the loader detects gzip vs plain by content, so unzipped files work too
+    path = tmp_path / "reviews.jsonl"
+    rows = [{"rating": 4.0, "asin": "C3"}]
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(rows[0]) + "\n")
+
+    assert list(read_jsonl_gz(path)) == rows
