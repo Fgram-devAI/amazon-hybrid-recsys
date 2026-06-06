@@ -39,3 +39,30 @@ def test_unknown_user_falls_back_without_crashing():
     model = ContentBasedRecommender(FakeEmbedder(dim=64)).fit(TRAIN, META)
     value = model.predict("u_new", "i1")
     assert 1.0 <= value <= 5.0
+
+
+def test_duplicate_metadata_items_are_deduped_before_feature_alignment():
+    metadata = pd.concat(
+        [
+            META,
+            pd.DataFrame(
+                [
+                    {
+                        "parent_asin": "i3",
+                        "text": "duplicate rpg dragon adventure",
+                        "price": 11.0,
+                        "average_rating": 4.6,
+                        "rating_number": 90,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    model = ContentBasedRecommender(FakeEmbedder(dim=64)).fit(TRAIN, metadata)
+
+    assert len(model.item_index_) == metadata["parent_asin"].nunique()
+    assert model.features_ is not None
+    assert model.features_.shape[0] == len(model.item_index_)
+    assert 1.0 <= model.predict("u1", "i3") <= 5.0

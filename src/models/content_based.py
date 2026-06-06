@@ -40,6 +40,9 @@ class ContentBasedRecommender(Recommender):
             raise ValueError("ContentBasedRecommender.fit requires metadata")
 
         meta_df: pd.DataFrame = metadata  # type: ignore[assignment]
+        meta_df = meta_df.drop_duplicates(subset=["parent_asin"], keep="last").reset_index(
+            drop=True
+        )
 
         # use the on-disk embedding cache (Task 4) when a cache_dir is provided
         if self.cache_dir is not None:
