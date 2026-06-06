@@ -29,3 +29,13 @@ def load_interactions(records):
         )
     df = pd.DataFrame(rows, columns=INTERACTION_COLUMNS)
     return df, raw_count
+
+
+def deduplicate_interactions(df):
+    """Keep exactly one interaction per (user_id, parent_asin): the latest by timestamp.
+
+    Stable sort makes the choice deterministic when timestamps are missing or tied.
+    """
+    ordered = df.sort_values("timestamp", kind="stable", na_position="first")
+    deduped = ordered.drop_duplicates(subset=["user_id", "parent_asin"], keep="last")
+    return deduped.reset_index(drop=True)
