@@ -12,38 +12,41 @@ from .metrics import mae, precision_recall_f1_at_k, relevant_items_by_user, rmse
 def sample_negatives(all_items, exclude, n, rng):
     """Sample up to n items not in `exclude` without scanning the catalog per user."""
     exclude = set(exclude)
-    if n <= 0 or len(exclude) >= len(all_items):
+    if n <= 0:
         return []
 
+    n_items = len(all_items)
     sampled = []
     sampled_set = set()
-    attempts = 0
-    max_attempts = max(100, n * 20)
 
-    while len(sampled) < n and attempts < max_attempts:
-        batch_size = min(len(all_items), max(32, (n - len(sampled)) * 3))
-        indices = rng.integers(0, len(all_items), size=batch_size)
-        for idx in indices:
-            item = all_items[int(idx)]
-            if item in exclude or item in sampled_set:
-                continue
-            sampled.append(item)
-            sampled_set.add(item)
-            if len(sampled) == n:
-                break
-        attempts += 1
+    # Rejection sampling is fast when the catalog dwarfs the exclusions. Skip it
+    # when exclusions dominate (which can happen when `exclude` holds held-out
+    # positives that are not in the catalog) and go straight to the scan.
+    if len(exclude) < n_items:
+        attempts = 0
+        max_attempts = max(100, n * 20)
+        while len(sampled) < n and attempts < max_attempts:
+            batch_size = min(n_items, max(32, (n - len(sampled)) * 3))
+            indices = rng.integers(0, n_items, size=batch_size)
+            for idx in indices:
+                item = all_items[int(idx)]
+                if item in exclude or item in sampled_set:
+                    continue
+                sampled.append(item)
+                sampled_set.add(item)
+                if len(sampled) == n:
+                    return sampled
+            attempts += 1
 
-    if len(sampled) == n:
-        return sampled
-
-    # Rare fallback for tiny catalogs or huge exclude sets.
+    # Deterministic fallback: tiny catalogs, dominant exclusions, or rejection
+    # that did not converge. Returns as many as are available, up to n.
     for item in all_items:
+        if len(sampled) == n:
+            break
         if item in exclude or item in sampled_set:
             continue
         sampled.append(item)
         sampled_set.add(item)
-        if len(sampled) == n:
-            break
     return sampled
 
 

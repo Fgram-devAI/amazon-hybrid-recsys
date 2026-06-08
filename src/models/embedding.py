@@ -69,30 +69,34 @@ class SentenceTransformerEmbedder:
 
 
 def build_embedder(config: dict) -> Embedder:
-    """Build the primary embedder; fall back to MiniLM on failure."""
+    """Build the preferred embedder, degrading model then device on failure.
+
+    Tries the primary model on the configured device, then the fallback model,
+    then retries both on CPU — so a device that is unavailable on the current
+    machine (e.g. "mps" on non-Apple hardware) does not break embedding.
+    """
     models = config.get("models", {})
     primary = models.get("embedding_model", "ibm-granite/granite-embedding-97m-multilingual-r2")
     fallback = models.get("embedding_fallback", "sentence-transformers/all-MiniLM-L6-v2")
     device = models.get("embedding_device", "cpu")
-    batch_size = int(models.get("embedding_batch_size", 256))
-    max_seq_length = int(models.get("embedding_max_seq_length", 256))
-    max_chars = int(models.get("embedding_max_chars", 2000))
-    try:
-        return SentenceTransformerEmbedder(
-            primary,
-            device=device,
-            batch_size=batch_size,
-            max_seq_length=max_seq_length,
-            max_chars=max_chars,
-        )
-    except Exception:
-        return SentenceTransformerEmbedder(
-            fallback,
-            device=device,
-            batch_size=batch_size,
-            max_seq_length=max_seq_length,
-            max_chars=max_chars,
-        )
+    kwargs = {
+        "batch_size": int(models.get("embedding_batch_size", 256)),
+        "max_seq_length": int(models.get("embedding_max_seq_length", 256)),
+        "max_chars": int(models.get("embedding_max_chars", 2000)),
+    }
+
+    candidates = [(primary, device), (fallback, device), (primary, "cpu"), (fallback, "cpu")]
+    seen = set()
+    last_error = None
+    for model_name, dev in candidates:
+        if (model_name, dev) in seen:
+            continue
+        seen.add((model_name, dev))
+        try:
+            return SentenceTransformerEmbedder(model_name, device=dev, **kwargs)
+        except Exception as error:
+            last_error = error
+    raise RuntimeError("could not build any embedder") from last_error
 
 
 def content_hash_for(metadata_df, model_name: str) -> str:

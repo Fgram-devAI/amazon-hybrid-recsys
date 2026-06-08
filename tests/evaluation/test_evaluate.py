@@ -90,3 +90,13 @@ def test_evaluate_models_can_cap_ranking_users():
 
     assert table["n_eval_users"].iloc[0] == 2
     assert table["max_eval_users"].iloc[0] == 2
+
+
+def test_sample_negatives_returns_available_when_exclude_exceeds_catalog():
+    import numpy as np
+
+    items = np.asarray(["i1", "i2", "i3"], dtype=object)
+    # exclude = 1 catalog item + 3 out-of-catalog positives -> len(exclude) > catalog
+    exclude = {"i1", "p1", "p2", "p3"}
+    negs = sample_negatives(items, exclude, n=2, rng=np.random.default_rng(42))
+    assert set(negs) == {"i2", "i3"}  # available catalog negatives, not []
