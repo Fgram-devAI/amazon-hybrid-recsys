@@ -8,13 +8,13 @@ A hybrid recommender system that combines **content-based filtering** and **coll
 
 Two recommendation paradigms, each with a known weakness:
 
-- **Content-based** — recommends items similar in content (text embeddings + genre/brand/price) to what a user already liked. Ignores other users; weak when item content is thin.
+- **Content-based** — recommends items similar in content (text embeddings + numeric metadata) to what a user already liked. Categories are included in the embedded text blob. Ignores other users; weak when item content is thin.
 - **Collaborative filtering (CF)** — recommends from user behaviour patterns in the ratings matrix. Strong when data is dense; struggles with sparsity and cold-start.
 
-The **hybrid** fuses both so each covers the other's weakness. This project implements the fusion **two ways**:
+The **hybrid** fuses both so each covers the other's weakness. The project is planned in two modeling phases:
 
-1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, with `α` tuned per dataset.
-2. **GraphSAGE hybrid** — a Graph Neural Network over the user–item graph, where item nodes carry content features and message passing captures collaborative structure. The two signals are fused *inside the model*, not blended afterward.
+1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, implemented in Phase 1.
+2. **GraphSAGE hybrid** — planned for Phase 2: a Graph Neural Network over the user–item graph, where item nodes carry content features and message passing captures collaborative structure.
 
 ## Datasets
 
@@ -51,7 +51,7 @@ Raw and processed data are reproducible local artifacts and are not committed.
 | Item-KNN CF | ratings matrix |
 | SVD CF (matrix factorization) | ratings matrix |
 | Weighted hybrid | both (blended at output) |
-| GraphSAGE hybrid | both (fused in-model) |
+| GraphSAGE hybrid | both (planned Phase 2, fused in-model) |
 
 All models share one interface — `fit`, `predict(user, item)`, `recommend(user, K)` — so the evaluation harness and app treat them identically.
 
