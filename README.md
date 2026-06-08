@@ -8,13 +8,13 @@ A hybrid recommender system that combines **content-based filtering** and **coll
 
 Two recommendation paradigms, each with a known weakness:
 
-- **Content-based** — recommends items similar in content (text embeddings + genre/brand/price) to what a user already liked. Ignores other users; weak when item content is thin.
+- **Content-based** — recommends items similar in content (text embeddings + numeric metadata) to what a user already liked. Categories are included in the embedded text blob. Ignores other users; weak when item content is thin.
 - **Collaborative filtering (CF)** — recommends from user behaviour patterns in the ratings matrix. Strong when data is dense; struggles with sparsity and cold-start.
 
-The **hybrid** fuses both so each covers the other's weakness. This project implements the fusion **two ways**:
+The **hybrid** fuses both so each covers the other's weakness. The project is planned in two modeling phases:
 
-1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, with `α` tuned per dataset.
-2. **GraphSAGE hybrid** — a Graph Neural Network over the user–item graph, where item nodes carry content features and message passing captures collaborative structure. The two signals are fused *inside the model*, not blended afterward.
+1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, implemented in Phase 1.
+2. **GraphSAGE hybrid** — planned for Phase 2: a Graph Neural Network over the user–item graph, where item nodes carry content features and message passing captures collaborative structure.
 
 ## Datasets
 
@@ -51,16 +51,43 @@ Raw and processed data are reproducible local artifacts and are not committed.
 | Item-KNN CF | ratings matrix |
 | SVD CF (matrix factorization) | ratings matrix |
 | Weighted hybrid | both (blended at output) |
-| GraphSAGE hybrid | both (fused in-model) |
+| GraphSAGE hybrid | both (planned Phase 2, fused in-model) |
 
 All models share one interface — `fit`, `predict(user, item)`, `recommend(user, K)` — so the evaluation harness and app treat them identically.
 
 ## Evaluation
 
-Every benchmark model is evaluated on the main benchmark datasets with:
+Every model is evaluated with:
 
-- **RMSE** / **MAE** — rating-prediction accuracy
-- **Precision@K** / **Recall@K** / **F1@K** — top-K ranking quality (relevant = rating ≥ 4)
+- **RMSE** / **MAE** — rating-prediction accuracy over held-out test rows
+- **Precision@K** / **Recall@K** / **F1@K** — **sampled-candidate** ranking (relevant = rating ≥ 4): each user is ranked over its held-out positives + N sampled unseen negatives (N = 100, seed 42). These are sampled-candidate metrics, not full-catalog ranking.
+
+Materialize/inspect item embeddings (optional — evaluation builds them on first run otherwise):
+
+```bash
+python -m src.models.embed --dataset <key> [--preview]
+```
+
+Run the model comparison (writes `data/processed/<key>/metrics.json`, a local artifact):
+
+```bash
+python -m src.evaluation.evaluate --dataset video_games --no-knn
+python -m src.evaluation.evaluate --dataset movies_and_tv --no-knn --max-eval-users 5000
+```
+
+## First results
+
+Sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
+
+| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---|---|---|---|---|---|
+| content | 1.2539 | 0.8699 | 0.0618 | 0.3588 | 0.0975 |
+| svd | 1.0560 | 0.7503 | 0.0489 | 0.2521 | 0.0742 |
+| hybrid | 1.0832 | 0.7890 | 0.0513 | 0.2743 | 0.0793 |
+
+SVD currently wins rating prediction; content wins sampled ranking. The hybrid does not yet beat both because `alpha` is fixed at 0.5 (not yet tuned/calibrated). The P/R/F1 are sampled-candidate metrics — a random baseline on the same setup is ≈ P@10 0.019 / R@10 0.098 / F1@10 0.029, so content is well above random even though precision looks numerically low.
+
+`metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
 ## Roadmap
 
@@ -88,10 +115,14 @@ Requires **Python 3.11**.
 pip install -r requirements.txt
 ```
 
-> Dependency management is being migrated to `uv` + `pyproject.toml`, with optional groups per phase (`gnn`, `graph`).
+> Runs on **Python 3.11** (`scikit-surprise` / `sentence-transformers` need it). Deps are pinned in `requirements.txt`.
 
 ## Status
 
-🚧 In active development — Phase 1.
+🚧 Phase 1 — **`feat/models` implemented; evaluation underway.**
 
-Current dataset finding: `Video_Games` and `Movies_and_TV` both survive strict 5-core filtering and are the main benchmark datasets. `Digital_Music` is too sparse for the main full-model comparison because 5-core filtering removes it entirely; it remains useful as a cold-start/sparsity analysis case.
+- Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
+- A first sampled `movies_and_tv` run is in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
+- **GraphSAGE** remains planned for **Phase 2** (not implemented).
+
+Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.

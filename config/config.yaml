@@ -37,3 +37,14 @@ evaluation:
 
 hybrid:
   alpha: 0.5               # weighted hybrid: alpha*CF + (1-alpha)*content
+
+models:
+  embedding_model: "ibm-granite/granite-embedding-97m-multilingual-r2"
+  embedding_fallback: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_device: "mps"       # Apple Silicon acceleration; use "cpu" only as fallback
+  embedding_batch_size: 256     # explicit SentenceTransformer encode batch size
+  embedding_max_seq_length: 256 # cap transformer tokens to avoid long-description blowups
+  embedding_max_chars: 2000     # truncate long metadata blobs before tokenization
+  ranking_num_negatives: 100   # sampled negatives per user for ranking metrics
+  ranking_random_seed: 42      # fixed seed -> reproducible sampled ranking
+  candidate_cap: 1000          # optional upper bound for candidate sets
