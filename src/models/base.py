@@ -19,6 +19,12 @@ class Recommender(ABC):
         self.item_means_: dict[str, float] = {}
         self.user_means_: dict[str, float] = {}
         self.user_items_: dict[str, set[str]] = {}
+        self._fitted: bool = False
+
+    @property
+    def is_fitted(self) -> bool:
+        """True once the model has been fitted (set when means are computed)."""
+        return self._fitted
 
     def _fit_means(self, train: pd.DataFrame) -> None:
         self.global_mean_ = float(train["rating"].mean())
@@ -37,6 +43,7 @@ class Recommender(ABC):
                 for user, items in train.groupby("user_id")["parent_asin"]
             },
         )
+        self._fitted = True
 
     def _fallback(self, user_id: str, parent_asin: str) -> float:
         if parent_asin in self.item_means_:

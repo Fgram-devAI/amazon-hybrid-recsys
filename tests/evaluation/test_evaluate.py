@@ -92,6 +92,22 @@ def test_evaluate_models_can_cap_ranking_users():
     assert table["max_eval_users"].iloc[0] == 2
 
 
+def test_build_models_shares_hybrid_component_instances():
+    from src.evaluation.evaluate import build_models
+    from src.models.embedding import FakeEmbedder
+
+    config = {
+        "processed_dir": "data/processed",
+        "hybrid": {"alpha": 0.5},
+        "models": {"ranking_random_seed": 42},
+    }
+    models = build_models(config, "tiny", FakeEmbedder(dim=8), no_knn=True)
+
+    # the hybrid reuses the standalone svd/content instances -> fitted once each
+    assert models["hybrid"].cf is models["svd"]
+    assert models["hybrid"].content is models["content"]
+
+
 def test_sample_negatives_returns_available_when_exclude_exceeds_catalog():
     import numpy as np
 

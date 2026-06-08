@@ -145,15 +145,35 @@ def _load_processed(processed_dir, dataset):
     )
 
 
+def build_models(config, dataset, embedder, *, no_knn=False):
+    """Construct the model set, sharing component instances with the hybrid.
+
+    The hybrid reuses the same ``svd`` and ``content`` instances that are also
+    evaluated standalone, so ``evaluate_models`` fits each underlying model once
+    (``WeightedHybrid.fit`` skips already-fitted components).
+    """
+    from src.models.cf import KNNRecommender, SVDRecommender
+    from src.models.content_based import ContentBasedRecommender
+    from src.models.weighted_hybrid import WeightedHybrid
+
+    mc = config.get("models", {})
+    cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
+    content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
+    svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
+
+    models = {"content": content, "svd": svd}
+    if not no_knn:
+        models["item_knn"] = KNNRecommender()
+    models["hybrid"] = WeightedHybrid(svd, content, alpha=config["hybrid"]["alpha"])
+    return models
+
+
 def main(argv=None):
     """CLI: run the model comparison for a processed dataset."""
     import argparse
 
     from src.data.config import load_config
-    from src.models.cf import KNNRecommender, SVDRecommender
-    from src.models.content_based import ContentBasedRecommender
     from src.models.embedding import build_embedder
-    from src.models.weighted_hybrid import WeightedHybrid
 
     parser = argparse.ArgumentParser(description="Evaluate recommender models on a dataset.")
     parser.add_argument("--config", default="config/config.yaml")
@@ -174,18 +194,7 @@ def main(argv=None):
 
     mc = config.get("models", {})
     embedder = build_embedder(config)
-    cache_dir = Path(config["processed_dir"]) / args.dataset / "embeddings"
-    content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
-    svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
-
-    models = {"content": content, "svd": svd}
-    if not args.no_knn:
-        models["item_knn"] = KNNRecommender()
-    models["hybrid"] = WeightedHybrid(
-        SVDRecommender(random_state=mc.get("ranking_random_seed", 42)),
-        ContentBasedRecommender(embedder, cache_dir=cache_dir),
-        alpha=config["hybrid"]["alpha"],
-    )
+    models = build_models(config, args.dataset, embedder, no_knn=args.no_knn)
 
     table = evaluate_models(
         models,

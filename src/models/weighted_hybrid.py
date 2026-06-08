@@ -12,8 +12,13 @@ class WeightedHybrid(Recommender):
 
     def fit(self, train, metadata=None):
         self._fit_means(train)
-        self.cf.fit(train, metadata)
-        self.content.fit(train, metadata)
+        # Skip components that were already fitted (e.g. the same svd/content
+        # instances are evaluated standalone and shared with the hybrid), so the
+        # underlying models are not refitted. Unfitted components fit normally.
+        if not self.cf.is_fitted:
+            self.cf.fit(train, metadata)
+        if not self.content.is_fitted:
+            self.content.fit(train, metadata)
         return self
 
     def predict(self, user_id, parent_asin) -> float:

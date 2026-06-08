@@ -28,6 +28,23 @@ class StubRecommender(Recommender):
         return self.value
 
 
+class CountingRecommender(Recommender):
+    """Counts fit calls to verify components are (not) refitted."""
+
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+        self.fit_calls = 0
+
+    def fit(self, train, metadata=None):
+        self.fit_calls += 1
+        self._fit_means(train)
+        return self
+
+    def predict(self, user_id, parent_asin):
+        return self.value
+
+
 def _hybrid(alpha):
     cf = StubRecommender(4.0)
     content = StubRecommender(2.0)
@@ -38,3 +55,19 @@ def test_alpha_endpoints_and_midpoint():
     assert _hybrid(1.0).predict("u1", "i1") == 4.0   # all CF
     assert _hybrid(0.0).predict("u1", "i1") == 2.0   # all content
     assert _hybrid(0.5).predict("u1", "i1") == 3.0   # average
+
+
+def test_hybrid_fits_unfitted_components():
+    cf = CountingRecommender(4.0)
+    content = CountingRecommender(2.0)
+    WeightedHybrid(cf, content, alpha=0.5).fit(TRAIN)
+    assert cf.fit_calls == 1
+    assert content.fit_calls == 1
+
+
+def test_hybrid_does_not_refit_already_fitted_components():
+    cf = CountingRecommender(4.0).fit(TRAIN)
+    content = CountingRecommender(2.0).fit(TRAIN)
+    WeightedHybrid(cf, content, alpha=0.5).fit(TRAIN)
+    assert cf.fit_calls == 1      # reused, not refitted
+    assert content.fit_calls == 1  # reused, not refitted
