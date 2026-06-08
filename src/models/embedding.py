@@ -40,14 +40,31 @@ class FakeEmbedder:
 class SentenceTransformerEmbedder:
     """Wraps a sentence-transformers model (Granite primary, MiniLM fallback)."""
 
-    def __init__(self, model_name: str):
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        device: str | None = None,
+        batch_size: int = 256,
+        max_seq_length: int = 256,
+        max_chars: int = 2000,
+    ):
         from sentence_transformers import SentenceTransformer
 
-        self.name = model_name
-        self._model = SentenceTransformer(model_name)
+        self.name = f"{model_name}|seq={max_seq_length}|max_chars={max_chars}"
+        self.batch_size = batch_size
+        self.max_seq_length = max_seq_length
+        self.max_chars = max_chars
+        self._model = SentenceTransformer(model_name, device=device)
+        self._model.max_seq_length = max_seq_length
 
     def encode(self, texts: list[str]) -> np.ndarray:
-        vecs = self._model.encode(list(texts), show_progress_bar=False)
+        prepared = [str(text)[: self.max_chars] for text in texts]
+        vecs = self._model.encode(
+            prepared,
+            batch_size=self.batch_size,
+            show_progress_bar=True,
+        )
         return np.asarray(vecs, dtype=np.float32)
 
 
@@ -56,10 +73,26 @@ def build_embedder(config: dict) -> Embedder:
     models = config.get("models", {})
     primary = models.get("embedding_model", "ibm-granite/granite-embedding-97m-multilingual-r2")
     fallback = models.get("embedding_fallback", "sentence-transformers/all-MiniLM-L6-v2")
+    device = models.get("embedding_device", "cpu")
+    batch_size = int(models.get("embedding_batch_size", 256))
+    max_seq_length = int(models.get("embedding_max_seq_length", 256))
+    max_chars = int(models.get("embedding_max_chars", 2000))
     try:
-        return SentenceTransformerEmbedder(primary)
+        return SentenceTransformerEmbedder(
+            primary,
+            device=device,
+            batch_size=batch_size,
+            max_seq_length=max_seq_length,
+            max_chars=max_chars,
+        )
     except Exception:
-        return SentenceTransformerEmbedder(fallback)
+        return SentenceTransformerEmbedder(
+            fallback,
+            device=device,
+            batch_size=batch_size,
+            max_seq_length=max_seq_length,
+            max_chars=max_chars,
+        )
 
 
 def content_hash_for(metadata_df, model_name: str) -> str:
