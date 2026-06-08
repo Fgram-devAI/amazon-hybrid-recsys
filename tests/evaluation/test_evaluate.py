@@ -59,3 +59,34 @@ def test_evaluate_models_returns_one_row_per_model_with_metric_columns():
                 "precision_at_k", "recall_at_k", "f1_at_k"]:
         assert col in table.columns
     assert table["rmse"].iloc[0] >= 0.0
+
+
+def test_evaluate_models_can_cap_ranking_users():
+    test = pd.DataFrame(
+        [
+            {"user_id": f"u{i}", "parent_asin": f"t{i}", "rating": 5.0}
+            for i in range(5)
+        ]
+    )
+    train = pd.DataFrame(
+        [
+            {"user_id": f"u{i}", "parent_asin": f"i{i}", "rating": 4.0}
+            for i in range(5)
+        ]
+    )
+    metadata = pd.DataFrame({"parent_asin": [f"i{i}" for i in range(5)]})
+
+    table = evaluate_models(
+        {"fixed": FixedScore()},
+        train,
+        test,
+        metadata,
+        k=2,
+        min_rating_relevant=4.0,
+        num_negatives=2,
+        seed=42,
+        max_eval_users=2,
+    )
+
+    assert table["n_eval_users"].iloc[0] == 2
+    assert table["max_eval_users"].iloc[0] == 2
