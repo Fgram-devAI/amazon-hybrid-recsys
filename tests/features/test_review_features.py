@@ -69,6 +69,13 @@ def test_aggregates_use_train_only_keys_not_extras():
     assert set(df["user_id"]) == {"u1", "u2"}   # u3 dropped — not in train
 
 
+def test_duplicate_sentiment_keys_do_not_duplicate_train_rows():
+    duplicated = pd.concat([_SENTIMENT, _SENTIMENT.iloc[[0]]], ignore_index=True)
+    df = item_review_aggregates(_TRAIN, duplicated)
+    by_item = df.set_index("parent_asin")
+    assert by_item.loc["i1", "item_train_sentiment_count"] == 2
+
+
 def test_cold_user_returns_no_row():
     # No interactions for u9 in train -> aggregates omit u9 entirely.
     df = user_review_aggregates(_TRAIN, _SENTIMENT)

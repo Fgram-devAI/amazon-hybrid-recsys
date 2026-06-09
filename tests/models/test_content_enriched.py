@@ -115,3 +115,25 @@ def test_sentiment_and_user_aggregates_are_consumed(tmp_path):
     assert enriched.features_.shape[1] == base.features_.shape[1] + 2
     # user-generosity offset comes from the train-only user aggregates -> consumed in predict
     assert enriched.user_offset_["u1"] == pytest.approx(min(1.0, 5.0 - enriched.global_mean_))
+
+
+def test_user_offset_prefers_sentiment_gap_over_rating_mean(tmp_path):
+    rf_dir = tmp_path / "advanced_features"
+    rf_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {"user_id": "u1", "user_mean_rating": 5.0, "user_rating_minus_sentiment_gap": 2.0},
+            {"user_id": "u2", "user_mean_rating": 1.0, "user_rating_minus_sentiment_gap": 4.0},
+        ]
+    ).to_parquet(rf_dir / "user_review_aggregates.parquet", index=False)
+
+    model = ContentEnrichedRecommender(
+        FakeEmbedder(dim=8),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        review_features_dir=rf_dir,
+    ).fit(_TRAIN, _METADATA)
+
+    assert model.user_offset_["u1"] == pytest.approx(-1.0)
+    assert model.user_offset_["u2"] == pytest.approx(1.0)

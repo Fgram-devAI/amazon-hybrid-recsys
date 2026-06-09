@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from src.features.sentiment import (
     FakeSentimentModel,
@@ -60,3 +61,17 @@ def test_empty_text_falls_back_to_neutral():
     [row] = model.score([""])
     assert row["sentiment_label"] == "NEUTRAL"
     assert row["sentiment_score"] == 0.0
+
+
+def test_score_train_reviews_rejects_non_positive_max_rows(tmp_path: Path):
+    with pytest.raises(ValueError, match="max_rows must be positive"):
+        score_train_reviews(
+            train=pd.DataFrame(
+                [{"user_id": "u1", "parent_asin": "i1", "rating": 5.0, "timestamp": 1}]
+            ),
+            raw_reviews=[],
+            model=FakeSentimentModel(),
+            out_dir=tmp_path,
+            dataset="tiny",
+            max_rows=0,
+        )

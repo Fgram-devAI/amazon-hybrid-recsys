@@ -46,6 +46,11 @@ def main(argv: list[str] | None = None) -> None:
     train = pd.read_parquet(processed / "train.parquet")
 
     model = FakeSentimentModel() if args.fake else build_sentiment_model(config)
+    max_rows = (
+        args.max_rows
+        if args.max_rows is not None
+        else config["advanced_features"].get("sentiment_max_rows")
+    )
     score_train_reviews(
         train=train,
         raw_reviews=read_jsonl_gz(raw_path),
@@ -55,7 +60,7 @@ def main(argv: list[str] | None = None) -> None:
         text_column="text",
         batch_size=int(config["advanced_features"]["sentiment_batch_size"]),
         max_chars=int(config["advanced_features"]["sentiment_max_chars"]),
-        max_rows=args.max_rows or config["advanced_features"].get("sentiment_max_rows"),
+        max_rows=max_rows,
     )
     sentiment = pd.read_parquet(out_dir / "train_sentiment.parquet")
 

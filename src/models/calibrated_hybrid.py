@@ -22,12 +22,16 @@ class CalibratedHybrid(Recommender):
         *,
         alpha: float = 0.5,
         calibrate: bool = True,
+        calibration_max_rows: int | None = None,
+        random_state: int = 42,
     ) -> None:
         super().__init__()
         self.cf = cf
         self.content = content
         self.alpha = float(alpha)
         self.calibrate = bool(calibrate)
+        self.calibration_max_rows = calibration_max_rows
+        self.random_state = int(random_state)
         self.cf_mean_: float = 0.0
         self.cf_std_: float = 1.0
         self.content_mean_: float = 0.0
@@ -43,12 +47,33 @@ class CalibratedHybrid(Recommender):
             self.content.fit(train, metadata)
 
         if self.calibrate:
+            calibration_rows = train
+            if (
+                self.calibration_max_rows is not None
+                and len(calibration_rows) > self.calibration_max_rows
+            ):
+                calibration_rows = calibration_rows.sample(
+                    n=self.calibration_max_rows,
+                    random_state=self.random_state,
+                )
             cf_scores = np.array(
-                [self.cf.predict(u, i) for u, i in zip(train["user_id"], train["parent_asin"])],
+                [
+                    self.cf.predict(u, i)
+                    for u, i in zip(
+                        calibration_rows["user_id"],
+                        calibration_rows["parent_asin"],
+                    )
+                ],
                 dtype=float,
             )
             content_scores = np.array(
-                [self.content.predict(u, i) for u, i in zip(train["user_id"], train["parent_asin"])],
+                [
+                    self.content.predict(u, i)
+                    for u, i in zip(
+                        calibration_rows["user_id"],
+                        calibration_rows["parent_asin"],
+                    )
+                ],
                 dtype=float,
             )
             self.cf_mean_ = float(cf_scores.mean())

@@ -91,6 +91,9 @@ def score_train_reviews(
     Filters by ``(user_id, parent_asin, timestamp)`` so held-out test reviews are
     NEVER scored. Returns the parquet path.
     """
+    if max_rows is not None and max_rows <= 0:
+        raise ValueError("max_rows must be positive when provided")
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 

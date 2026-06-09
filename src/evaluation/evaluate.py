@@ -52,7 +52,7 @@ def sample_negatives(all_items, exclude, n, rng):
 
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
-                    progress=False):
+                    max_test_rows=None, progress=False):
     """Fit each model and return a metrics DataFrame (one row per model)."""
     for name, model in models.items():
         fit_start = perf_counter()
@@ -61,6 +61,10 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         model.fit(train, metadata)
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
+
+    rating_test = test
+    if max_test_rows is not None and len(test) > max_test_rows:
+        rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
 
     relevant = relevant_items_by_user(test, min_rating_relevant)
     if max_eval_users is not None and len(relevant) > max_eval_users:
@@ -83,11 +87,14 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
     rows = []
     for name, model in models.items():
         if progress:
-            print(f"[{dataset}] predicting ratings for {name} on {len(test):,} rows ...", flush=True)
+            print(f"[{dataset}] predicting ratings for {name} on {len(rating_test):,} rows ...", flush=True)
         rating_start = perf_counter()
-        y_true = test["rating"].to_numpy(dtype=float)
+        y_true = rating_test["rating"].to_numpy(dtype=float)
         y_pred = np.array(
-            [model.predict(u, i) for u, i in zip(test["user_id"], test["parent_asin"])]
+            [
+                model.predict(u, i)
+                for u, i in zip(rating_test["user_id"], rating_test["parent_asin"])
+            ]
         )
         if progress:
             print(
@@ -131,6 +138,7 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                 "f1_at_k": float(np.mean(f1s)) if f1s else None,
                 "n_eval_users": len(precisions),
                 "max_eval_users": max_eval_users,
+                "max_test_rows": max_test_rows,
             }
         )
     return pd.DataFrame(rows)
@@ -196,7 +204,14 @@ def build_models(
         )
         models["content_enriched"] = content_enriched
         models["calibrated_hybrid"] = CalibratedHybrid(
-            svd, content_enriched, alpha=blend_alpha, calibrate=True
+            svd,
+            content_enriched,
+            alpha=blend_alpha,
+            calibrate=True,
+            calibration_max_rows=config.get("hybrid", {})
+            .get("tuning", {})
+            .get("calibration_max_rows"),
+            random_state=seed,
         )
     return models
 
@@ -213,6 +228,7 @@ def main(argv=None):
     parser.add_argument("--dataset", required=True, help="processed dataset key")
     parser.add_argument("--no-knn", action="store_true", help="skip Item-KNN (memory-bound)")
     parser.add_argument("--max-eval-users", type=int, help="cap ranking eval users for large runs")
+    parser.add_argument("--max-test-rows", type=int, help="cap rating rows for dev RMSE/MAE runs")
     parser.add_argument("--quiet", action="store_true", help="suppress progress logs")
     parser.add_argument("--advanced", action="store_true",
                         help="add random/popularity baselines + enriched content + calibrated hybrid")
@@ -283,6 +299,7 @@ def main(argv=None):
         seed=mc.get("ranking_random_seed", 42),
         dataset=args.dataset,
         max_eval_users=args.max_eval_users,
+        max_test_rows=args.max_test_rows,
         progress=not args.quiet,
     )
 

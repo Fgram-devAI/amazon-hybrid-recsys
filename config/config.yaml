@@ -43,6 +43,7 @@ hybrid:
     random_seed: 42
     max_users: 20000               # cap users used for tuning (keeps --tune-alpha safe on large data); null = all
     max_val_rows: 50000            # cap validation rows scored per alpha; null = all
+    calibration_max_rows: 50000    # cap rows used to estimate calibrated-hybrid score stats; null = all
 
 models:
   embedding_model: "ibm-granite/granite-embedding-97m-multilingual-r2"

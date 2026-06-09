@@ -12,6 +12,10 @@ import pandas as pd
 
 def _train_sentiment(train: pd.DataFrame, sentiment: pd.DataFrame) -> pd.DataFrame:
     """Left-join train rows with sentiment cache on (user, item, ts); train rows always survive."""
+    sentiment = sentiment.drop_duplicates(
+        subset=["user_id", "parent_asin", "timestamp"],
+        keep="last",
+    )
     return train.merge(
         sentiment,
         on=["user_id", "parent_asin", "timestamp"],

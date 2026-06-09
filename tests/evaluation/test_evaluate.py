@@ -92,6 +92,22 @@ def test_evaluate_models_can_cap_ranking_users():
     assert table["max_eval_users"].iloc[0] == 2
 
 
+def test_evaluate_models_can_cap_rating_rows():
+    table = evaluate_models(
+        {"fixed": FixedScore()},
+        TRAIN,
+        pd.concat([TEST, TEST, TEST], ignore_index=True),
+        META,
+        k=2,
+        min_rating_relevant=4.0,
+        num_negatives=2,
+        seed=42,
+        max_test_rows=2,
+    )
+
+    assert table["max_test_rows"].iloc[0] == 2
+
+
 def test_build_models_shares_hybrid_component_instances():
     from src.evaluation.evaluate import build_models
     from src.models.embedding import FakeEmbedder

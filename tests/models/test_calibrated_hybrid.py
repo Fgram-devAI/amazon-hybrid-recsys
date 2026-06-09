@@ -27,6 +27,16 @@ class ConstantStub(Recommender):
         return self.value
 
 
+class CountingStub(ConstantStub):
+    def __init__(self, value: float) -> None:
+        super().__init__(value)
+        self.calls = 0
+
+    def predict(self, user_id, parent_asin):
+        self.calls += 1
+        return self.value
+
+
 def test_calibration_disabled_blends_exactly_like_weighted_hybrid():
     hybrid = CalibratedHybrid(
         ConstantStub(4.0), ConstantStub(2.0), alpha=0.5, calibrate=False
@@ -59,3 +69,24 @@ def test_alpha_endpoints_pick_the_right_component_uncalibrated():
         .predict("u1", "i1")
         == 1.5
     )
+
+
+def test_calibration_can_sample_training_rows_to_bound_fit_cost():
+    train = pd.DataFrame(
+        [
+            {"user_id": f"u{i}", "parent_asin": f"i{i}", "rating": 4.0}
+            for i in range(20)
+        ]
+    )
+    cf = CountingStub(4.0)
+    content = CountingStub(3.0)
+    CalibratedHybrid(
+        cf,
+        content,
+        alpha=0.5,
+        calibrate=True,
+        calibration_max_rows=5,
+        random_state=42,
+    ).fit(train)
+    assert cf.calls == 5
+    assert content.calls == 5

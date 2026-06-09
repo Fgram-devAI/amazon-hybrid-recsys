@@ -158,14 +158,18 @@ class ContentEnrichedRecommender(Recommender):
         return _standardize(feats)
 
     def _user_generosity_offsets(self) -> dict[str, float]:
-        """Train-only per-user offset = clip(user_mean_rating - global_mean, -1, 1)."""
+        """Train-only per-user offset from sentiment/rating gap, falling back to rating bias."""
         path = self._aggregate_path("user_review_aggregates.parquet")
         if path is None:
             return {}
         agg = pd.read_parquet(path)
-        if "user_mean_rating" not in agg.columns:
+        if "user_rating_minus_sentiment_gap" in agg.columns:
+            gaps = agg["user_rating_minus_sentiment_gap"].astype(float)
+            offsets = (gaps - gaps.mean()).clip(-1.0, 1.0)
+        elif "user_mean_rating" in agg.columns:
+            offsets = (agg["user_mean_rating"] - self.global_mean_).clip(-1.0, 1.0)
+        else:
             return {}
-        offsets = (agg["user_mean_rating"] - self.global_mean_).clip(-1.0, 1.0)
         return dict(zip(agg["user_id"].astype(str), offsets.astype(float)))
 
     def predict(self, user_id: str, parent_asin: str) -> float:
