@@ -78,6 +78,18 @@ python -m src.evaluation.evaluate --dataset video_games --no-knn
 python -m src.evaluation.evaluate --dataset movies_and_tv --no-knn --max-eval-users 5000
 ```
 
+Advanced models (enriched content, sentiment, user/item aggregates, baselines, and α tuning):
+
+```bash
+# (advanced) build train-only sentiment + user/item aggregates once per dataset
+#   --fake = FakeSentimentModel (no HF download); omit it for the real HF model
+./.venv/bin/python -m src.features.build_sentiment_features --dataset video_games --fake
+
+# (advanced) add random/popularity baselines + enriched content + calibrated hybrid,
+# and tune the hybrid alpha on a train-only validation slice
+./.venv/bin/python -m src.evaluation.evaluate --dataset video_games --no-knn --advanced --tune-alpha
+```
+
 ## First results
 
 Sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
@@ -125,11 +137,10 @@ pip install -r requirements.txt
 
 ## Status
 
-🚧 Phase 2 — **`feat/advanced-models` in planning.**
+🚧 Phase 2 (`feat/advanced-models`): filtered category features, **train-only** review-text sentiment + user/item aggregates (consumed by the enriched content model), random + popularity baselines, and validation-slice α tuning. **Leakage rule:** held-out test review text never feeds the prediction for the same test interaction. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
 
 - Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
 - A first sampled `movies_and_tv` run is in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
-- Next branch: enrich content and review-feedback signals before graph recommenders. User review text is interaction feedback and must be used from training interactions only, never from held-out test rows.
 - **LightGCN/GraphSAGE**, Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
 
 Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.
