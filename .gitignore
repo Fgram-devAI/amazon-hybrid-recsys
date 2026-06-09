@@ -36,3 +36,7 @@ CLAUDE.md
 .claude/
 .agents/
 skills-lock.json
+
+# --- Graph recommender artefacts (weights, checkpoints — never committed) ---
+/data/processed/**/graph_checkpoints/
+/data/processed/**/graph_features/
