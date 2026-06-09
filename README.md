@@ -11,10 +11,12 @@ Two recommendation paradigms, each with a known weakness:
 - **Content-based** — recommends items similar in content (text embeddings + numeric metadata) to what a user already liked. Categories are included in the embedded text blob. Ignores other users; weak when item content is thin.
 - **Collaborative filtering (CF)** — recommends from user behaviour patterns in the ratings matrix. Strong when data is dense; struggles with sparsity and cold-start.
 
-The **hybrid** fuses both so each covers the other's weakness. The project is planned in two modeling phases:
+The **hybrid** fuses both so each covers the other's weakness. The project is planned in staged modeling/infrastructure phases:
 
 1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, implemented in Phase 1.
-2. **GraphSAGE hybrid** — planned for Phase 2: a Graph Neural Network over the user–item graph, where item nodes carry content features and message passing captures collaborative structure.
+2. **Advanced content/review-feedback models** — planned next: filtered category features, review-text sentiment, user strictness/generosity features, and stronger sanity baselines.
+3. **Graph recommenders** — planned after that: LightGCN and GraphSAGE over the user-item graph, with item/user features where appropriate.
+4. **Retrieval/reasoning infrastructure** — Milvus + Neo4j + an LLM reasoning layer as the final extension, not the primary evaluated recommender.
 
 ## Datasets
 
@@ -51,7 +53,8 @@ Raw and processed data are reproducible local artifacts and are not committed.
 | Item-KNN CF | ratings matrix |
 | SVD CF (matrix factorization) | ratings matrix |
 | Weighted hybrid | both (blended at output) |
-| GraphSAGE hybrid | both (planned Phase 2, fused in-model) |
+| Enriched content/review models | item metadata + train-only review feedback (planned) |
+| LightGCN / GraphSAGE | graph structure, optionally node features (planned) |
 
 All models share one interface — `fit`, `predict(user, item)`, `recommend(user, K)` — so the evaluation harness and app treat them identically.
 
@@ -91,9 +94,12 @@ SVD currently wins rating prediction; content wins sampled ranking. The hybrid d
 
 ## Roadmap
 
-- **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, full evaluation, Streamlit app.
-- **Phase 2** — GraphSAGE hybrid (PyTorch Geometric) added as a fifth model in the main implementation.
-- **Phase 3** — Neo4j graph store + LightRAG (Claude) for explainable, conversational recommendations.
+- **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
+- **Phase 2 (`feat/advanced-models`)** — richer content/review-feedback models: filtered categories, train-only review sentiment, user strictness/generosity features, popularity/random baselines, and hybrid calibration.
+- **Phase 3 (`feat/graph-recommender`)** — LightGCN and GraphSAGE plus graph EDA/community analysis.
+- **Phase 4 (`feat/streamlit-app`)** — visual app layer over metrics, EDA, users, items, and recommendations.
+- **Phase 5 (`feat/storage-vector-graph-dbs`)** — Milvus vector search and Neo4j graph storage.
+- **Phase 6 (`feat/llm-recommender-system`)** — LLM-guided explanation/reasoning over model outputs, vector search, and graph queries.
 
 ## Project structure
 
@@ -101,7 +107,7 @@ SVD currently wins rating prediction; content wins sampled ranking. The hybrid d
 config/        central configuration (datasets, preprocessing, evaluation)
 src/
   data/        download, parse, filter, split, build graph
-  models/      content-based, KNN, SVD, weighted hybrid, GraphSAGE
+  models/      content-based, KNN, SVD, weighted hybrid, advanced/graph models
   evaluation/  metrics and the comparison harness
   app/         Streamlit application
 tests/         pytest suite
@@ -119,10 +125,11 @@ pip install -r requirements.txt
 
 ## Status
 
-🚧 Phase 1 — **`feat/models` implemented; evaluation underway.**
+🚧 Phase 2 — **`feat/advanced-models` in planning.**
 
 - Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
 - A first sampled `movies_and_tv` run is in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
-- **GraphSAGE** remains planned for **Phase 2** (not implemented).
+- Next branch: enrich content and review-feedback signals before graph recommenders. User review text is interaction feedback and must be used from training interactions only, never from held-out test rows.
+- **LightGCN/GraphSAGE**, Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
 
 Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.
