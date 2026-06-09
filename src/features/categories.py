@@ -7,6 +7,8 @@ training-side metadata; this module never reads test rows.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 _ACRONYMS = {"tv", "dvd", "cd", "pc", "rpg", "4k", "uhd", "vhs", "vr"}
 
 
@@ -29,8 +31,8 @@ def normalize_category(value: object) -> str | None:
 
 
 def filter_categories(
-    raw: list[object] | tuple[object, ...] | None,
-    generic_roots: list[str],
+    raw: Sequence[object] | None,
+    generic_roots: Sequence[str],
 ) -> list[str]:
     """Normalize, drop generic roots + empties, deduplicate (order-preserving)."""
     if not raw:
@@ -44,8 +46,10 @@ def filter_categories(
     out: list[str] = []
     for value in raw:
         norm = normalize_category(value)
-        key = norm.casefold() if norm is not None else None
-        if norm is None or key in generic or key in seen:
+        if norm is None:
+            continue
+        key = norm.casefold()
+        if key in generic or key in seen:
             continue
         seen.add(key)
         out.append(norm)
