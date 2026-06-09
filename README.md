@@ -128,6 +128,27 @@ and improves hybrid ranking, while higher `α` stays closer to SVD for rating RM
 The standalone `content_enriched` row remains the strongest advanced-content ranking
 result (`F1@10 = 0.1250`), narrowly below popularity (`F1@10 = 0.1284`).
 
+### Sentiment ablation (`video_games`, sampled-candidate, α = 0.6)
+
+| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---|---:|---:|---:|---:|---:|
+| content_enriched_with_sentiment | 1.2660 | 0.8258 | 0.0755 | 0.5014 | 0.1250 |
+| content_enriched_no_sentiment   | 1.1777 | 0.7917 | 0.0627 | 0.4278 | 0.1047 |
+
+The no-sentiment variant uses the same train slice, embedder, sampled
+candidates, and category vocabulary as the sentiment-aware variant; it
+drops only the train-only item-sentiment columns and the user-generosity
+offset.
+
+Sentiment improves F1@10 from 0.1047 to 0.1250 (Δ = +0.0204) but regresses MAE from 0.7917 to 0.8258 (Δ = +0.0341), so sentiment is kept as an optional ranking-oriented feature rather than a universal win.
+
+Reproduction command:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate \
+  --dataset video_games --no-knn --advanced --include-ablation --alpha 0.6
+```
+
 Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
