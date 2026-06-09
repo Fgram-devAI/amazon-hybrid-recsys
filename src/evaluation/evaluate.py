@@ -145,26 +145,59 @@ def _load_processed(processed_dir, dataset):
     )
 
 
-def build_models(config, dataset, embedder, *, no_knn=False):
-    """Construct the model set, sharing component instances with the hybrid.
+def build_models(
+    config,
+    dataset,
+    embedder,
+    *,
+    no_knn=False,
+    advanced=False,
+    alpha=None,
+):
+    """Construct the model set, sharing component instances with the hybrids.
 
-    The hybrid reuses the same ``svd`` and ``content`` instances that are also
-    evaluated standalone, so ``evaluate_models`` fits each underlying model once
-    (``WeightedHybrid.fit`` skips already-fitted components).
+    When ``advanced`` is True, also registers random + popularity baselines, the
+    enriched content recommender, and a calibrated hybrid that reuses the svd +
+    enriched-content components.
     """
+    from src.models.baselines import PopularityRecommender, RandomRecommender
+    from src.models.calibrated_hybrid import CalibratedHybrid
     from src.models.cf import KNNRecommender, SVDRecommender
     from src.models.content_based import ContentBasedRecommender
+    from src.models.content_enriched import ContentEnrichedRecommender
     from src.models.weighted_hybrid import WeightedHybrid
 
     mc = config.get("models", {})
+    af = config.get("advanced_features", {})
     cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
     content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
     svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
 
+    blend_alpha = float(alpha if alpha is not None else config["hybrid"]["alpha"])
     models = {"content": content, "svd": svd}
     if not no_knn:
         models["item_knn"] = KNNRecommender()
-    models["hybrid"] = WeightedHybrid(svd, content, alpha=config["hybrid"]["alpha"])
+    models["hybrid"] = WeightedHybrid(svd, content, alpha=blend_alpha)
+
+    if advanced:
+        seed = int(mc.get("ranking_random_seed", 42))
+        af_dir = Path(config["processed_dir"]) / dataset / "advanced_features"
+        models["random"] = RandomRecommender(seed=seed)
+        models["popularity"] = PopularityRecommender()
+        content_enriched = ContentEnrichedRecommender(
+            embedder,
+            generic_roots=af.get("generic_category_roots", []),
+            max_vocab=int(af.get("category_vocab_max", 256)),
+            min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+            # dedicated cache for the title+description embeddings (NOT the Phase-1 cache)
+            cache_dir=af_dir / "title_desc_embeddings",
+            # train-only sentiment/user/item aggregates (consumed if the offline job ran)
+            review_features_dir=af_dir,
+        )
+        models["content_enriched"] = content_enriched
+        models["calibrated_hybrid"] = CalibratedHybrid(
+            svd, content_enriched, alpha=blend_alpha, calibrate=True
+        )
     return models
 
 
@@ -181,6 +214,10 @@ def main(argv=None):
     parser.add_argument("--no-knn", action="store_true", help="skip Item-KNN (memory-bound)")
     parser.add_argument("--max-eval-users", type=int, help="cap ranking eval users for large runs")
     parser.add_argument("--quiet", action="store_true", help="suppress progress logs")
+    parser.add_argument("--advanced", action="store_true",
+                        help="add random/popularity baselines + enriched content + calibrated hybrid")
+    parser.add_argument("--alpha", type=float,
+                        help="override hybrid blend alpha for this run")
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
@@ -194,7 +231,10 @@ def main(argv=None):
 
     mc = config.get("models", {})
     embedder = build_embedder(config)
-    models = build_models(config, args.dataset, embedder, no_knn=args.no_knn)
+    models = build_models(
+        config, args.dataset, embedder,
+        no_knn=args.no_knn, advanced=args.advanced, alpha=args.alpha,
+    )
 
     table = evaluate_models(
         models,
