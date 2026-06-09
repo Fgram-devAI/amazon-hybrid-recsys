@@ -3,7 +3,8 @@
 SVD and content scores live on different distributions; without calibration the
 component with larger natural spread dominates the blend. With ``calibrate=True``
 the hybrid standardizes each component's score against its training-time mean
-and std and recentres on the global training mean before blending.
+and std, then maps the standardized score onto the global training-rating mean
+and standard deviation before blending.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ class CalibratedHybrid(Recommender):
         self.cf_std_: float = 1.0
         self.content_mean_: float = 0.0
         self.content_std_: float = 1.0
+        self.target_std_: float = 1.0
 
     def fit(
         self, train: pd.DataFrame, metadata: object = None
@@ -80,11 +82,12 @@ class CalibratedHybrid(Recommender):
             self.content_mean_ = float(content_scores.mean())
             self.cf_std_ = float(cf_scores.std() or 1.0)
             self.content_std_ = float(content_scores.std() or 1.0)
+            self.target_std_ = float(calibration_rows["rating"].std(ddof=0) or 1.0)
         return self
 
     def _calibrate(self, raw: float, mean: float, std: float) -> float:
         z = (raw - mean) / (std or 1.0)
-        return self.global_mean_ + z * 1.0   # 1.0-sigma re-spread on the rating scale
+        return self.global_mean_ + z * self.target_std_
 
     def predict(self, user_id: str, parent_asin: str) -> float:
         cf_raw = self.cf.predict(user_id, parent_asin)

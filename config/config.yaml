@@ -54,7 +54,6 @@ models:
   embedding_max_chars: 2000     # truncate long metadata blobs before tokenization
   ranking_num_negatives: 100   # sampled negatives per user for ranking metrics
   ranking_random_seed: 42      # fixed seed -> reproducible sampled ranking
-  candidate_cap: 1000          # optional upper bound for candidate sets
 
 advanced_features:
   # generic roots stripped from item categories before vocab build
