@@ -80,6 +80,8 @@ python -m src.evaluation.evaluate --dataset movies_and_tv --no-knn --max-eval-us
 
 Advanced models (enriched content, sentiment, user/item aggregates, baselines, and α tuning):
 
+[![Open sentiment feature builder in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Fgram-devAI/amazon-hybrid-recsys/blob/feat/advanced-models/notebooks/colab_sentiment_features.ipynb)
+
 ```bash
 # (advanced) build train-only sentiment + user/item aggregates once per dataset
 #   --fake = FakeSentimentModel (no HF download); omit it for the real HF model
