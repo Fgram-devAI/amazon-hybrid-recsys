@@ -94,7 +94,26 @@ Advanced models (enriched content, sentiment, user/item aggregates, baselines, a
 
 ## First results
 
-Sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
+Full advanced run on the primary benchmark (`video_games`, 5-core, 79,248 ranking users).
+The sentiment features were built from train-only review text with
+`distilbert-base-uncased-finetuned-sst-2-english` on MPS:
+
+| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---|---:|---:|---:|---:|---:|
+| content | 1.4757 | 1.0580 | 0.0399 | 0.2856 | 0.0675 |
+| svd | **1.1337** | 0.8173 | 0.0335 | 0.2100 | 0.0543 |
+| hybrid | **1.1337** | 0.8173 | 0.0335 | 0.2100 | 0.0543 |
+| random | 1.2569 | 0.9780 | 0.0152 | 0.0975 | 0.0249 |
+| popularity | 1.2270 | 0.9059 | **0.0776** | **0.5108** | **0.1284** |
+| content_enriched | 1.2660 | 0.8258 | 0.0755 | 0.5014 | 0.1250 |
+| calibrated_hybrid | 1.1654 | **0.7891** | 0.0528 | 0.3126 | 0.0848 |
+
+SVD remains the strongest RMSE model, while calibrated hybrid gives the best MAE.
+Popularity is a very strong sampled-ranking baseline; the enriched content model is
+close behind it on P/R/F1 while improving substantially over plain content on RMSE/MAE.
+The tuned alpha selected `1.0`, so the classic weighted hybrid collapses to SVD in this run.
+
+Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
 |---|---|---|---|---|---|
@@ -102,7 +121,8 @@ Sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 | svd | 1.0560 | 0.7503 | 0.0489 | 0.2521 | 0.0742 |
 | hybrid | 1.0832 | 0.7890 | 0.0513 | 0.2743 | 0.0793 |
 
-SVD currently wins rating prediction; content wins sampled ranking. The hybrid does not yet beat both because `alpha` is fixed at 0.5 (not yet tuned/calibrated). The P/R/F1 are sampled-candidate metrics — a random baseline on the same setup is ≈ P@10 0.019 / R@10 0.098 / F1@10 0.029, so content is well above random even though precision looks numerically low.
+The P/R/F1 values are sampled-candidate metrics — compare them against the
+random and popularity rows before judging their absolute scale.
 
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
