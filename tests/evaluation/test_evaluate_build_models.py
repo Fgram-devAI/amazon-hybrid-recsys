@@ -38,3 +38,8 @@ def test_calibrated_hybrid_shares_components_with_standalone_models():
     calibrated = models["calibrated_hybrid"]
     assert calibrated.cf is models["svd"]
     assert calibrated.content is models["content_enriched"]
+
+
+def test_build_models_uses_explicit_alpha_override():
+    models = build_models(_config(), "tiny", FakeEmbedder(dim=8), no_knn=True, alpha=0.75)
+    assert models["hybrid"].alpha == 0.75

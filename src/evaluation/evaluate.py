@@ -218,6 +218,10 @@ def main(argv=None):
                         help="add random/popularity baselines + enriched content + calibrated hybrid")
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
+    parser.add_argument(
+        "--tune-alpha", action="store_true",
+        help="sweep hybrid.tuning.grid on a validation slice carved from train; pick best alpha",
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
@@ -231,9 +235,41 @@ def main(argv=None):
 
     mc = config.get("models", {})
     embedder = build_embedder(config)
+
+    chosen_alpha = args.alpha
+    if args.tune_alpha:
+        from src.evaluation.tune import tune_alpha as _tune
+        from src.models.content_based import ContentBasedRecommender
+        from src.models.cf import SVDRecommender
+        from src.models.weighted_hybrid import WeightedHybrid
+
+        tuning = config["hybrid"].get("tuning", {})
+        cache_dir = Path(config["processed_dir"]) / args.dataset / "embeddings"
+
+        def _factory(alpha_val: float):
+            return WeightedHybrid(
+                SVDRecommender(random_state=mc.get("ranking_random_seed", 42)),
+                ContentBasedRecommender(embedder, cache_dir=cache_dir),
+                alpha=alpha_val,
+            )
+
+        result = _tune(
+            train,
+            metadata=metadata,
+            grid=tuning.get("grid", [0.0, 0.25, 0.5, 0.75, 1.0]),
+            hybrid_factory=_factory,
+            validation_fraction=float(tuning.get("validation_fraction", 0.1)),
+            seed=int(tuning.get("random_seed", 42)),
+            max_users=tuning.get("max_users"),       # cap users for tuning (large-data safe)
+            max_val_rows=tuning.get("max_val_rows"),  # cap validation rows scored per alpha
+        )
+        chosen_alpha = result.best_alpha
+        if not args.quiet:
+            print(f"[{args.dataset}] tuned alpha={chosen_alpha} from scores={result.scores}", flush=True)
+
     models = build_models(
         config, args.dataset, embedder,
-        no_knn=args.no_knn, advanced=args.advanced, alpha=args.alpha,
+        no_knn=args.no_knn, advanced=args.advanced, alpha=chosen_alpha,
     )
 
     table = evaluate_models(
