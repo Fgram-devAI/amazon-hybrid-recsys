@@ -149,6 +149,19 @@ Reproduction command:
   --dataset video_games --no-knn --advanced --include-ablation --alpha 0.6
 ```
 
+Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
+
+| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---|---|---|---|---|---|
+| content | 1.2539 | 0.8699 | 0.0618 | 0.3588 | 0.0975 |
+| svd | 1.0560 | 0.7503 | 0.0489 | 0.2521 | 0.0742 |
+| hybrid | 1.0832 | 0.7890 | 0.0513 | 0.2743 | 0.0793 |
+
+The P/R/F1 values are sampled-candidate metrics — compare them against the
+random and popularity rows before judging their absolute scale.
+
+`metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
+
 ## Graph Recommender Models (LightGCN + GraphSAGE)
 
 The graph models extend the comparison table with two PyTorch Geometric–backed
@@ -168,19 +181,6 @@ Run: `./.venv/bin/python -m src.evaluation.evaluate --dataset video_games --no-k
 Dependencies installed once via `pip install -r requirements.txt` (heavy: torch
 pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. On
 darwin arm64 the graph models run on CPU by default; MPS is opportunistic.
-
-Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
-
-| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
-|---|---|---|---|---|---|
-| content | 1.2539 | 0.8699 | 0.0618 | 0.3588 | 0.0975 |
-| svd | 1.0560 | 0.7503 | 0.0489 | 0.2521 | 0.0742 |
-| hybrid | 1.0832 | 0.7890 | 0.0513 | 0.2743 | 0.0793 |
-
-The P/R/F1 values are sampled-candidate metrics — compare them against the
-random and popularity rows before judging their absolute scale.
-
-`metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
 ## Roadmap
 
