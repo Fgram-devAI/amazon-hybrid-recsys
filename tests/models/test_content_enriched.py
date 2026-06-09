@@ -137,3 +137,82 @@ def test_user_offset_prefers_sentiment_gap_over_rating_mean(tmp_path):
 
     assert model.user_offset_["u1"] == pytest.approx(-1.0)
     assert model.user_offset_["u2"] == pytest.approx(1.0)
+
+
+def test_no_sentiment_variant_skips_item_aggregate_file(tmp_path):
+    rf_dir = tmp_path / "advanced_features"
+    rf_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {"parent_asin": "i1", "item_train_sentiment_mean": 0.9, "item_rating_minus_sentiment_gap": 4.1},
+            {"parent_asin": "i2", "item_train_sentiment_mean": 0.8, "item_rating_minus_sentiment_gap": 4.2},
+            {"parent_asin": "i3", "item_train_sentiment_mean": -0.5, "item_rating_minus_sentiment_gap": 4.0},
+        ]
+    ).to_parquet(rf_dir / "item_review_aggregates.parquet", index=False)
+    pd.DataFrame(
+        [{"user_id": "u1", "user_mean_rating": 5.0, "user_rating_minus_sentiment_gap": 2.0}]
+    ).to_parquet(rf_dir / "user_review_aggregates.parquet", index=False)
+
+    base = ContentEnrichedRecommender(
+        FakeEmbedder(dim=8), generic_roots=["Movies & TV"], max_vocab=8, min_doc_freq=1,
+    ).fit(_TRAIN, _METADATA)
+    no_sent = ContentEnrichedRecommender(
+        FakeEmbedder(dim=8), generic_roots=["Movies & TV"], max_vocab=8, min_doc_freq=1,
+        review_features_dir=rf_dir,
+        use_item_sentiment=False,
+        use_user_offset=False,
+    ).fit(_TRAIN, _METADATA)
+
+    # No sentiment columns added even though the aggregate parquet is present.
+    assert no_sent.features_ is not None and base.features_ is not None
+    assert no_sent.features_.shape[1] == base.features_.shape[1]
+    # User offset map must stay empty even though user_review_aggregates.parquet exists.
+    assert no_sent.user_offset_ == {}
+
+
+def test_no_sentiment_variant_does_not_open_aggregate_files(tmp_path, monkeypatch):
+    rf_dir = tmp_path / "advanced_features"
+    rf_dir.mkdir(parents=True)
+    # Sentinel: any read_parquet on these paths should fail the test.
+    bad_item = rf_dir / "item_review_aggregates.parquet"
+    bad_user = rf_dir / "user_review_aggregates.parquet"
+    bad_item.write_bytes(b"NOT-A-PARQUET")
+    bad_user.write_bytes(b"NOT-A-PARQUET")
+
+    model = ContentEnrichedRecommender(
+        FakeEmbedder(dim=8), generic_roots=["Movies & TV"], max_vocab=8, min_doc_freq=1,
+        review_features_dir=rf_dir,
+        use_item_sentiment=False,
+        use_user_offset=False,
+    ).fit(_TRAIN, _METADATA)
+    # If the flags were ignored, reading the corrupt parquet above would have raised.
+    assert model.features_ is not None
+    assert model.user_offset_ == {}
+
+
+def test_sentiment_aware_variant_still_consumes_aggregates(tmp_path):
+    rf_dir = tmp_path / "advanced_features"
+    rf_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {"parent_asin": "i1", "item_train_sentiment_mean": 0.9, "item_rating_minus_sentiment_gap": 4.1},
+            {"parent_asin": "i2", "item_train_sentiment_mean": 0.8, "item_rating_minus_sentiment_gap": 4.2},
+            {"parent_asin": "i3", "item_train_sentiment_mean": -0.5, "item_rating_minus_sentiment_gap": 4.0},
+        ]
+    ).to_parquet(rf_dir / "item_review_aggregates.parquet", index=False)
+    pd.DataFrame([{"user_id": "u1", "user_mean_rating": 5.0}]).to_parquet(
+        rf_dir / "user_review_aggregates.parquet", index=False
+    )
+
+    base = ContentEnrichedRecommender(
+        FakeEmbedder(dim=8), generic_roots=["Movies & TV"], max_vocab=8, min_doc_freq=1,
+    ).fit(_TRAIN, _METADATA)
+    enriched = ContentEnrichedRecommender(
+        FakeEmbedder(dim=8), generic_roots=["Movies & TV"], max_vocab=8, min_doc_freq=1,
+        review_features_dir=rf_dir,
+        # Defaults stay True -> sentiment-aware behavior is preserved.
+    ).fit(_TRAIN, _METADATA)
+
+    assert enriched.features_ is not None and base.features_ is not None
+    assert enriched.features_.shape[1] == base.features_.shape[1] + 2
+    assert "u1" in enriched.user_offset_

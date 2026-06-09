@@ -132,3 +132,46 @@ def test_sample_negatives_returns_available_when_exclude_exceeds_catalog():
     exclude = {"i1", "p1", "p2", "p3"}
     negs = sample_negatives(items, exclude, n=2, rng=np.random.default_rng(42))
     assert set(negs) == {"i2", "i3"}  # available catalog negatives, not []
+
+
+def test_evaluate_cli_accepts_include_ablation_flag(monkeypatch, tmp_path):
+    from src.evaluation import evaluate as ev
+
+    captured: dict = {}
+
+    def fake_build_models(*args, **kwargs):
+        captured["include_ablation"] = kwargs.get("include_ablation")
+        return {}
+
+    def fake_evaluate_models(*args, **kwargs):
+        import pandas as pd
+        return pd.DataFrame([{"model": "stub", "rmse": 0.0, "mae": 0.0}])
+
+    def fake_load_processed(processed_dir, dataset):
+        import pandas as pd
+        return (pd.DataFrame(columns=["user_id", "parent_asin", "rating"]),
+                pd.DataFrame(columns=["user_id", "parent_asin", "rating"]),
+                pd.DataFrame(columns=["parent_asin"]))
+
+    monkeypatch.setattr(ev, "build_models", fake_build_models)
+    monkeypatch.setattr(ev, "evaluate_models", fake_evaluate_models)
+    monkeypatch.setattr(ev, "_load_processed", fake_load_processed)
+    monkeypatch.setattr("src.data.config.load_config", lambda _p: {
+        "processed_dir": str(tmp_path),
+        "models": {"ranking_random_seed": 42},
+        "hybrid": {"alpha": 0.5},
+        "evaluation": {"k": 10},
+        "preprocessing": {"min_rating_relevant": 4.0},
+        "advanced_features": {},
+    })
+    monkeypatch.setattr("src.models.embedding.build_embedder", lambda _c: object())
+
+    ev.main(["--dataset", "tiny", "--no-knn", "--advanced", "--include-ablation", "--quiet"])
+    assert captured["include_ablation"] is True
+
+
+def test_include_ablation_without_advanced_is_rejected():
+    import pytest
+    from src.evaluation import evaluate as ev
+    with pytest.raises(SystemExit):
+        ev.main(["--dataset", "tiny", "--no-knn", "--include-ablation", "--quiet"])

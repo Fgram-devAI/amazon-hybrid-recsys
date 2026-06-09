@@ -67,6 +67,8 @@ class ContentEnrichedRecommender(Recommender):
         min_doc_freq: int,
         cache_dir: object = None,
         review_features_dir: object = None,
+        use_item_sentiment: bool = True,
+        use_user_offset: bool = True,
     ) -> None:
         super().__init__()
         self.embedder = embedder
@@ -75,6 +77,8 @@ class ContentEnrichedRecommender(Recommender):
         self.min_doc_freq = int(min_doc_freq)
         self.cache_dir = cache_dir                      # cached title+description embeddings
         self.review_features_dir = review_features_dir  # train-only sentiment aggregates
+        self.use_item_sentiment = bool(use_item_sentiment)
+        self.use_user_offset = bool(use_user_offset)
         self.features_: np.ndarray | None = None
         self.item_index_: dict[str, int] = {}
         self.category_vocab_: list[str] = []
@@ -145,7 +149,9 @@ class ContentEnrichedRecommender(Recommender):
         return path if path.exists() else None
 
     def _item_sentiment_features(self, ids: list[str]) -> np.ndarray:
-        """Train-only item-sentiment columns aligned to ids; (n, 0) when cache absent."""
+        """Train-only item-sentiment columns aligned to ids; (n, 0) when disabled or cache absent."""
+        if not self.use_item_sentiment:
+            return np.zeros((len(ids), 0), dtype=np.float32)
         path = self._aggregate_path("item_review_aggregates.parquet")
         if path is None:
             return np.zeros((len(ids), 0), dtype=np.float32)
@@ -159,6 +165,8 @@ class ContentEnrichedRecommender(Recommender):
 
     def _user_generosity_offsets(self) -> dict[str, float]:
         """Train-only per-user offset from sentiment/rating gap, falling back to rating bias."""
+        if not self.use_user_offset:
+            return {}
         path = self._aggregate_path("user_review_aggregates.parquet")
         if path is None:
             return {}
