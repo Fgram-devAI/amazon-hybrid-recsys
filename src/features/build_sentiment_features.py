@@ -43,13 +43,26 @@ def main(argv: list[str] | None = None) -> None:
     raw_path = resolve_existing(review_gz)   # falls back to .jsonl if .gz absent
     processed = Path(config["processed_dir"]) / args.dataset
     out_dir = processed / "advanced_features"
+    print(f"[{args.dataset}] loading train split from {processed / 'train.parquet'}", flush=True)
     train = pd.read_parquet(processed / "train.parquet")
 
+    model_name = (
+        FakeSentimentModel.name
+        if args.fake
+        else config["advanced_features"]["sentiment_model"]
+    )
+    print(f"[{args.dataset}] building sentiment model: {model_name}", flush=True)
     model = FakeSentimentModel() if args.fake else build_sentiment_model(config)
     max_rows = (
         args.max_rows
         if args.max_rows is not None
         else config["advanced_features"].get("sentiment_max_rows")
+    )
+    cap = "all train rows" if max_rows is None else str(max_rows)
+    print(
+        f"[{args.dataset}] scoring train review text from {raw_path} "
+        f"(cap={cap}, batch_size={config['advanced_features']['sentiment_batch_size']})",
+        flush=True,
     )
     score_train_reviews(
         train=train,
@@ -61,7 +74,9 @@ def main(argv: list[str] | None = None) -> None:
         batch_size=int(config["advanced_features"]["sentiment_batch_size"]),
         max_chars=int(config["advanced_features"]["sentiment_max_chars"]),
         max_rows=max_rows,
+        progress=True,
     )
+    print(f"[{args.dataset}] building user/item review aggregates", flush=True)
     sentiment = pd.read_parquet(out_dir / "train_sentiment.parquet")
 
     user_review_aggregates(train, sentiment).to_parquet(

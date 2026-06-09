@@ -15,6 +15,7 @@ from typing import Protocol
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 _POSITIVE_WORDS = {"love", "great", "awesome", "good", "excellent", "amazing", "fun"}
 _NEGATIVE_WORDS = {"hate", "terrible", "bad", "awful", "boring", "broken", "worst"}
@@ -85,6 +86,7 @@ def score_train_reviews(
     batch_size: int = 32,
     max_chars: int = 1000,
     max_rows: int | None = None,
+    progress: bool = False,
 ) -> Path:
     """Score sentiment on raw reviews whose (user, item, ts) is in train; cache to disk.
 
@@ -104,6 +106,13 @@ def score_train_reviews(
     batched_texts: list[str] = []
     batched_keys: list[tuple[str, str, int]] = []
     rows: list[dict] = []
+    target_rows = min(max_rows, len(train_keys)) if max_rows is not None else len(train_keys)
+    bar = tqdm(
+        total=target_rows,
+        desc=f"[{dataset}] sentiment",
+        unit="review",
+        disable=not progress,
+    )
 
     def _flush():
         if not batched_texts:
@@ -118,6 +127,7 @@ def score_train_reviews(
                     **result,
                 }
             )
+        bar.update(len(scored))
         batched_texts.clear()
         batched_keys.clear()
 
@@ -134,6 +144,7 @@ def score_train_reviews(
             _flush()
             break
     _flush()
+    bar.close()
 
     parquet_path = out / "train_sentiment.parquet"
     pd.DataFrame(rows).to_parquet(parquet_path, index=False)

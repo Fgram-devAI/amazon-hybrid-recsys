@@ -114,6 +114,8 @@ def load_or_compute_item_embeddings(
     embedder: Embedder,
     cache_dir: Path | str,
     content_hash: str,
+    *,
+    progress: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Return (embeddings (n,d) float32, item_ids list). Cache on disk."""
     cache_dir = Path(cache_dir)
@@ -124,10 +126,22 @@ def load_or_compute_item_embeddings(
     if emb_path.exists() and ids_path.exists() and meta_path.exists():
         meta = json.loads(meta_path.read_text())
         if meta.get("content_hash") == content_hash and meta.get("model_name") == embedder.name:
+            if progress:
+                print(
+                    f"[embeddings] cache hit: {emb_path} "
+                    f"({meta.get('metadata_row_count')} items, dim={meta.get('dim')})",
+                    flush=True,
+                )
             return np.load(emb_path), json.loads(ids_path.read_text())
 
     ids = metadata_df["parent_asin"].tolist()
     texts = metadata_df["text"].fillna("").tolist()
+    if progress:
+        print(
+            f"[embeddings] computing {len(ids)} item embeddings with {embedder.name} "
+            f"-> {cache_dir}",
+            flush=True,
+        )
     emb = np.asarray(embedder.encode(texts), dtype=np.float32)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -144,4 +158,10 @@ def load_or_compute_item_embeddings(
             }
         )
     )
+    if progress:
+        print(
+            f"[embeddings] wrote {emb.shape[0]} embeddings "
+            f"(dim={emb.shape[1]}) -> {emb_path}",
+            flush=True,
+        )
     return emb, ids
