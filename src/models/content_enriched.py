@@ -14,6 +14,10 @@ Decisions (spec §5):
 Embeddings are **cached** via ``load_or_compute_item_embeddings`` under a dedicated
 ``cache_dir`` so they are not recomputed every eval run, and never collide with the
 Phase-1 content model's (title+description+categories) cache.
+
+Item-feature construction is now delegated to ``src.features.node_features`` so that
+GraphSAGE can consume the same matrix; this module owns only the user-generosity
+offset path and the similarity-weighted prediction.
 """
 
 from __future__ import annotations
@@ -23,38 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.features.categories import build_category_features, build_category_vocab
-from src.models.embedding import content_hash_for, load_or_compute_item_embeddings
-
 from .base import Recommender
-
-_NUMERIC_COLS = ["price", "average_rating", "rating_number"]
-_ITEM_SENTIMENT_COLS = ["item_train_sentiment_mean", "item_rating_minus_sentiment_gap"]
-
-
-def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    return matrix / norms
-
-
-def _standardize(matrix: np.ndarray) -> np.ndarray:
-    if matrix.shape[1] == 0:
-        return matrix
-    mean = matrix.mean(axis=0)
-    std = matrix.std(axis=0)
-    std[std == 0] = 1.0
-    return (matrix - mean) / std
-
-
-def _embed_text(meta_df: pd.DataFrame) -> list[str]:
-    """Embedding text = title + description (spec §5); fall back to `text` if absent."""
-    if "title" in meta_df.columns or "description" in meta_df.columns:
-        empty = pd.Series([""] * len(meta_df), index=meta_df.index)
-        title = meta_df.get("title", empty).fillna("").astype(str)
-        desc = meta_df.get("description", empty).fillna("").astype(str)
-        return (title + " " + desc).str.strip().tolist()
-    return meta_df["text"].fillna("").tolist()
 
 
 class ContentEnrichedRecommender(Recommender):
@@ -92,47 +65,22 @@ class ContentEnrichedRecommender(Recommender):
         if metadata is None:
             raise ValueError("ContentEnrichedRecommender.fit requires metadata")
 
-        meta_df: pd.DataFrame = metadata  # type: ignore[assignment]
-        meta_df = meta_df.drop_duplicates(subset=["parent_asin"], keep="last").reset_index(
-            drop=True
-        )
+        from src.features.node_features import build_item_node_features
 
-        # --- text embedding (title+description), cached when cache_dir is set ---
-        emb_df = meta_df.assign(text=_embed_text(meta_df))
-        if self.cache_dir is not None:
-            content_hash = content_hash_for(emb_df, self.embedder.name)  # type: ignore[union-attr]
-            text_emb, ids = load_or_compute_item_embeddings(
-                emb_df,
-                self.embedder,  # type: ignore[arg-type]
-                Path(str(self.cache_dir)),
-                content_hash,
-            )
-        else:
-            ids = meta_df["parent_asin"].tolist()
-            text_emb = np.asarray(
-                self.embedder.encode(emb_df["text"].tolist()),  # type: ignore[union-attr]
-                dtype=np.float32,
-            )
-        self.item_index_ = {item: row for row, item in enumerate(ids)}
-
-        # align metadata to the embedding id order (robust to cache ordering)
-        meta_by_id = meta_df.set_index("parent_asin").loc[ids].reset_index()
-
-        self.category_vocab_ = build_category_vocab(
-            meta_by_id,
+        features, ids = build_item_node_features(
+            metadata,  # type: ignore[arg-type]
+            embedder=self.embedder,  # type: ignore[arg-type]
             generic_roots=self.generic_roots,
             max_vocab=self.max_vocab,
             min_doc_freq=self.min_doc_freq,
+            cache_dir=Path(str(self.cache_dir)) if self.cache_dir is not None else None,
+            review_features_dir=Path(str(self.review_features_dir))
+                if self.review_features_dir is not None else None,
+            use_item_sentiment=self.use_item_sentiment,
         )
-        category_feats, _ = build_category_features(
-            meta_by_id, self.category_vocab_, generic_roots=self.generic_roots
-        )
-        numeric = _standardize(meta_by_id[_NUMERIC_COLS].to_numpy(dtype=np.float32))
-        item_sentiment = self._item_sentiment_features(ids)   # (n, 0) when absent
-
-        self.features_ = _l2_normalize(
-            np.hstack([text_emb, category_feats, numeric, item_sentiment]).astype(np.float32)
-        )
+        self.features_ = features
+        self.item_index_ = {item: row for row, item in enumerate(ids)}
+        self.category_vocab_ = []  # builder owns the vocab; keep attribute for backwards-compat
 
         self.user_history_ = {}
         for user, group in train.groupby("user_id"):
@@ -147,21 +95,6 @@ class ContentEnrichedRecommender(Recommender):
             return None
         path = Path(str(self.review_features_dir)) / name
         return path if path.exists() else None
-
-    def _item_sentiment_features(self, ids: list[str]) -> np.ndarray:
-        """Train-only item-sentiment columns aligned to ids; (n, 0) when disabled or cache absent."""
-        if not self.use_item_sentiment:
-            return np.zeros((len(ids), 0), dtype=np.float32)
-        path = self._aggregate_path("item_review_aggregates.parquet")
-        if path is None:
-            return np.zeros((len(ids), 0), dtype=np.float32)
-        agg = pd.read_parquet(path).set_index("parent_asin")
-        cols = [c for c in _ITEM_SENTIMENT_COLS if c in agg.columns]
-        if not cols:
-            return np.zeros((len(ids), 0), dtype=np.float32)
-        feats = agg.reindex(ids)[cols].to_numpy(dtype=np.float32)
-        feats = np.nan_to_num(feats, nan=0.0)   # cold items -> 0
-        return _standardize(feats)
 
     def _user_generosity_offsets(self) -> dict[str, float]:
         """Train-only per-user offset from sentiment/rating gap, falling back to rating bias."""
