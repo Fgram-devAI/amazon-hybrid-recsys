@@ -5,6 +5,7 @@ from time import perf_counter
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from .metrics import mae, precision_recall_f1_at_k, relevant_items_by_user, rmse
 
@@ -52,7 +53,7 @@ def sample_negatives(all_items, exclude, n, rng):
 
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
-                    progress=False):
+                    max_test_rows=None, progress=False):
     """Fit each model and return a metrics DataFrame (one row per model)."""
     for name, model in models.items():
         fit_start = perf_counter()
@@ -61,6 +62,10 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         model.fit(train, metadata)
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
+
+    rating_test = test
+    if max_test_rows is not None and len(test) > max_test_rows:
+        rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
 
     relevant = relevant_items_by_user(test, min_rating_relevant)
     if max_eval_users is not None and len(relevant) > max_eval_users:
@@ -83,11 +88,21 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
     rows = []
     for name, model in models.items():
         if progress:
-            print(f"[{dataset}] predicting ratings for {name} on {len(test):,} rows ...", flush=True)
+            print(f"[{dataset}] predicting ratings for {name} on {len(rating_test):,} rows ...", flush=True)
         rating_start = perf_counter()
-        y_true = test["rating"].to_numpy(dtype=float)
+        y_true = rating_test["rating"].to_numpy(dtype=float)
+        rating_pairs = zip(rating_test["user_id"], rating_test["parent_asin"])
         y_pred = np.array(
-            [model.predict(u, i) for u, i in zip(test["user_id"], test["parent_asin"])]
+            [
+                model.predict(u, i)
+                for u, i in tqdm(
+                    rating_pairs,
+                    total=len(rating_test),
+                    desc=f"[{dataset}] {name} ratings",
+                    unit="row",
+                    disable=not progress,
+                )
+            ]
         )
         if progress:
             print(
@@ -101,7 +116,13 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         if progress:
             print(f"[{dataset}] ranking candidates for {name} ...", flush=True)
         ranking_start = perf_counter()
-        for user, rel in relevant.items():
+        for user, rel in tqdm(
+            relevant.items(),
+            total=len(relevant),
+            desc=f"[{dataset}] {name} ranking",
+            unit="user",
+            disable=not progress,
+        ):
             exclude = user_train_items.get(user, set()) | rel
             negatives = sample_negatives(all_items, exclude, num_negatives, rng)
             candidates = list(rel) + negatives
@@ -131,6 +152,7 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                 "f1_at_k": float(np.mean(f1s)) if f1s else None,
                 "n_eval_users": len(precisions),
                 "max_eval_users": max_eval_users,
+                "max_test_rows": max_test_rows,
             }
         )
     return pd.DataFrame(rows)
@@ -145,26 +167,68 @@ def _load_processed(processed_dir, dataset):
     )
 
 
-def build_models(config, dataset, embedder, *, no_knn=False):
-    """Construct the model set, sharing component instances with the hybrid.
+def build_models(
+    config,
+    dataset,
+    embedder,
+    *,
+    no_knn=False,
+    advanced=False,
+    alpha=None,
+    progress=False,
+):
+    """Construct the model set, sharing component instances with the hybrids.
 
-    The hybrid reuses the same ``svd`` and ``content`` instances that are also
-    evaluated standalone, so ``evaluate_models`` fits each underlying model once
-    (``WeightedHybrid.fit`` skips already-fitted components).
+    When ``advanced`` is True, also registers random + popularity baselines, the
+    enriched content recommender, and a calibrated hybrid that reuses the svd +
+    enriched-content components.
     """
+    from src.models.baselines import PopularityRecommender, RandomRecommender
+    from src.models.calibrated_hybrid import CalibratedHybrid
     from src.models.cf import KNNRecommender, SVDRecommender
     from src.models.content_based import ContentBasedRecommender
+    from src.models.content_enriched import ContentEnrichedRecommender
     from src.models.weighted_hybrid import WeightedHybrid
 
     mc = config.get("models", {})
+    af = config.get("advanced_features", {})
     cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
     content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
     svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
 
+    blend_alpha = float(alpha if alpha is not None else config["hybrid"]["alpha"])
     models = {"content": content, "svd": svd}
     if not no_knn:
         models["item_knn"] = KNNRecommender()
-    models["hybrid"] = WeightedHybrid(svd, content, alpha=config["hybrid"]["alpha"])
+    models["hybrid"] = WeightedHybrid(svd, content, alpha=blend_alpha)
+
+    if advanced:
+        seed = int(mc.get("ranking_random_seed", 42))
+        af_dir = Path(config["processed_dir"]) / dataset / "advanced_features"
+        models["random"] = RandomRecommender(seed=seed)
+        models["popularity"] = PopularityRecommender()
+        content_enriched = ContentEnrichedRecommender(
+            embedder,
+            generic_roots=af.get("generic_category_roots", []),
+            max_vocab=int(af.get("category_vocab_max", 256)),
+            min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+            # dedicated cache for the title+description embeddings (NOT the Phase-1 cache)
+            cache_dir=af_dir / "title_desc_embeddings",
+            # train-only sentiment/user/item aggregates (consumed if the offline job ran)
+            review_features_dir=af_dir,
+        )
+        models["content_enriched"] = content_enriched
+        models["calibrated_hybrid"] = CalibratedHybrid(
+            svd,
+            content_enriched,
+            alpha=blend_alpha,
+            calibrate=True,
+            calibration_max_rows=config.get("hybrid", {})
+            .get("tuning", {})
+            .get("calibration_max_rows"),
+            random_state=seed,
+            progress=progress,
+        )
     return models
 
 
@@ -180,7 +244,16 @@ def main(argv=None):
     parser.add_argument("--dataset", required=True, help="processed dataset key")
     parser.add_argument("--no-knn", action="store_true", help="skip Item-KNN (memory-bound)")
     parser.add_argument("--max-eval-users", type=int, help="cap ranking eval users for large runs")
+    parser.add_argument("--max-test-rows", type=int, help="cap rating rows for dev RMSE/MAE runs")
     parser.add_argument("--quiet", action="store_true", help="suppress progress logs")
+    parser.add_argument("--advanced", action="store_true",
+                        help="add random/popularity baselines + enriched content + calibrated hybrid")
+    parser.add_argument("--alpha", type=float,
+                        help="override hybrid blend alpha for this run")
+    parser.add_argument(
+        "--tune-alpha", action="store_true",
+        help="sweep hybrid.tuning.grid on a validation slice carved from train; pick best alpha",
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
@@ -194,7 +267,53 @@ def main(argv=None):
 
     mc = config.get("models", {})
     embedder = build_embedder(config)
-    models = build_models(config, args.dataset, embedder, no_knn=args.no_knn)
+    if not args.quiet:
+        print(f"[{args.dataset}] embedder device: {embedder.device}", flush=True)
+        print(
+            f"[{args.dataset}] collaborative filtering device: cpu "
+            "(scikit-surprise SVD/KNN)",
+            flush=True,
+        )
+
+    chosen_alpha = args.alpha
+    if args.tune_alpha:
+        from src.evaluation.tune import tune_alpha as _tune
+        from src.models.content_based import ContentBasedRecommender
+        from src.models.cf import SVDRecommender
+        from src.models.weighted_hybrid import WeightedHybrid
+
+        tuning = config["hybrid"].get("tuning", {})
+        cache_dir = Path(config["processed_dir"]) / args.dataset / "embeddings"
+
+        def _factory(alpha_val: float):
+            return WeightedHybrid(
+                SVDRecommender(random_state=mc.get("ranking_random_seed", 42)),
+                ContentBasedRecommender(embedder, cache_dir=cache_dir),
+                alpha=alpha_val,
+            )
+
+        result = _tune(
+            train,
+            metadata=metadata,
+            grid=tuning.get("grid", [0.0, 0.25, 0.5, 0.75, 1.0]),
+            hybrid_factory=_factory,
+            validation_fraction=float(tuning.get("validation_fraction", 0.1)),
+            seed=int(tuning.get("random_seed", 42)),
+            max_users=tuning.get("max_users"),       # cap users for tuning (large-data safe)
+            max_val_rows=tuning.get("max_val_rows"),  # cap validation rows scored per alpha
+            progress=not args.quiet,
+        )
+        chosen_alpha = result.best_alpha
+        if not args.quiet:
+            print(f"[{args.dataset}] tuned alpha={chosen_alpha} from scores={result.scores}", flush=True)
+
+    models = build_models(
+        config, args.dataset, embedder,
+        no_knn=args.no_knn,
+        advanced=args.advanced,
+        alpha=chosen_alpha,
+        progress=not args.quiet,
+    )
 
     table = evaluate_models(
         models,
@@ -207,6 +326,7 @@ def main(argv=None):
         seed=mc.get("ranking_random_seed", 42),
         dataset=args.dataset,
         max_eval_users=args.max_eval_users,
+        max_test_rows=args.max_test_rows,
         progress=not args.quiet,
     )
 

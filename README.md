@@ -11,10 +11,12 @@ Two recommendation paradigms, each with a known weakness:
 - **Content-based** — recommends items similar in content (text embeddings + numeric metadata) to what a user already liked. Categories are included in the embedded text blob. Ignores other users; weak when item content is thin.
 - **Collaborative filtering (CF)** — recommends from user behaviour patterns in the ratings matrix. Strong when data is dense; struggles with sparsity and cold-start.
 
-The **hybrid** fuses both so each covers the other's weakness. The project is planned in two modeling phases:
+The **hybrid** fuses both so each covers the other's weakness. The project is planned in staged modeling/infrastructure phases:
 
 1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, implemented in Phase 1.
-2. **GraphSAGE hybrid** — planned for Phase 2: a Graph Neural Network over the user–item graph, where item nodes carry content features and message passing captures collaborative structure.
+2. **Advanced content/review-feedback models** — planned next: filtered category features, review-text sentiment, user strictness/generosity features, and stronger sanity baselines.
+3. **Graph recommenders** — planned after that: LightGCN and GraphSAGE over the user-item graph, with item/user features where appropriate.
+4. **Retrieval/reasoning infrastructure** — Milvus + Neo4j + an LLM reasoning layer as the final extension, not the primary evaluated recommender.
 
 ## Datasets
 
@@ -51,7 +53,8 @@ Raw and processed data are reproducible local artifacts and are not committed.
 | Item-KNN CF | ratings matrix |
 | SVD CF (matrix factorization) | ratings matrix |
 | Weighted hybrid | both (blended at output) |
-| GraphSAGE hybrid | both (planned Phase 2, fused in-model) |
+| Enriched content/review models | item metadata + train-only review feedback (planned) |
+| LightGCN / GraphSAGE | graph structure, optionally node features (planned) |
 
 All models share one interface — `fit`, `predict(user, item)`, `recommend(user, K)` — so the evaluation harness and app treat them identically.
 
@@ -75,9 +78,57 @@ python -m src.evaluation.evaluate --dataset video_games --no-knn
 python -m src.evaluation.evaluate --dataset movies_and_tv --no-knn --max-eval-users 5000
 ```
 
+Advanced models (enriched content, sentiment, user/item aggregates, baselines, and α tuning):
+
+[![Open sentiment feature builder in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Fgram-devAI/amazon-hybrid-recsys/blob/feat/advanced-models/notebooks/colab_sentiment_features.ipynb)
+
+```bash
+# (advanced) build train-only sentiment + user/item aggregates once per dataset
+#   --fake = FakeSentimentModel (no HF download); omit it for the real HF model
+./.venv/bin/python -m src.features.build_sentiment_features --dataset video_games --fake
+
+# (advanced) add random/popularity baselines + enriched content + calibrated hybrid,
+# and tune the hybrid alpha on a train-only validation slice
+./.venv/bin/python -m src.evaluation.evaluate --dataset video_games --no-knn --advanced --tune-alpha
+```
+
 ## First results
 
-Sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
+Full advanced run on the primary benchmark (`video_games`, 5-core, 79,248 ranking users).
+The sentiment features were built from train-only review text with
+`distilbert-base-uncased-finetuned-sst-2-english` on MPS. The table below uses
+the RMSE-tuned alpha (`α = 1.0`):
+
+| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---|---:|---:|---:|---:|---:|
+| content | 1.4757 | 1.0580 | 0.0399 | 0.2856 | 0.0675 |
+| svd | **1.1337** | 0.8173 | 0.0335 | 0.2100 | 0.0543 |
+| hybrid | **1.1337** | 0.8173 | 0.0335 | 0.2100 | 0.0543 |
+| random | 1.2569 | 0.9780 | 0.0152 | 0.0975 | 0.0249 |
+| popularity | 1.2270 | 0.9059 | **0.0776** | **0.5108** | **0.1284** |
+| content_enriched | 1.2660 | 0.8258 | 0.0755 | 0.5014 | 0.1250 |
+| calibrated_hybrid | 1.1654 | 0.7891 | 0.0528 | 0.3126 | 0.0848 |
+
+SVD remains the strongest RMSE model. Popularity is a very strong sampled-ranking
+baseline; the enriched content model is close behind it on P/R/F1 while improving
+substantially over plain content on RMSE/MAE. The RMSE-tuned alpha selected `1.0`,
+so the classic weighted hybrid collapses to SVD in this run.
+
+Fixed-alpha sweep for the calibrated hybrid (`α · SVD + (1 - α) · content_enriched`):
+
+| α | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---:|---:|---:|---:|---:|---:|
+| 0.75 | **1.1501** | 0.7698 | 0.0556 | 0.3330 | 0.0896 |
+| 0.60 | 1.1596 | **0.7664** | 0.0588 | 0.3562 | 0.0950 |
+| 0.50 | 1.1737 | 0.7679 | 0.0619 | 0.3789 | 0.1003 |
+| 0.40 | 1.1938 | 0.7722 | **0.0662** | **0.4093** | **0.1076** |
+
+This sweep shows the expected trade-off: lower `α` uses more enriched-content signal
+and improves hybrid ranking, while higher `α` stays closer to SVD for rating RMSE.
+The standalone `content_enriched` row remains the strongest advanced-content ranking
+result (`F1@10 = 0.1250`), narrowly below popularity (`F1@10 = 0.1284`).
+
+Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
 |---|---|---|---|---|---|
@@ -85,15 +136,19 @@ Sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 | svd | 1.0560 | 0.7503 | 0.0489 | 0.2521 | 0.0742 |
 | hybrid | 1.0832 | 0.7890 | 0.0513 | 0.2743 | 0.0793 |
 
-SVD currently wins rating prediction; content wins sampled ranking. The hybrid does not yet beat both because `alpha` is fixed at 0.5 (not yet tuned/calibrated). The P/R/F1 are sampled-candidate metrics — a random baseline on the same setup is ≈ P@10 0.019 / R@10 0.098 / F1@10 0.029, so content is well above random even though precision looks numerically low.
+The P/R/F1 values are sampled-candidate metrics — compare them against the
+random and popularity rows before judging their absolute scale.
 
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
 ## Roadmap
 
-- **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, full evaluation, Streamlit app.
-- **Phase 2** — GraphSAGE hybrid (PyTorch Geometric) added as a fifth model in the main implementation.
-- **Phase 3** — Neo4j graph store + LightRAG (Claude) for explainable, conversational recommendations.
+- **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
+- **Phase 2 (`feat/advanced-models`)** — richer content/review-feedback models: filtered categories, train-only review sentiment, user strictness/generosity features, popularity/random baselines, and hybrid calibration.
+- **Phase 3 (`feat/graph-recommender`)** — LightGCN and GraphSAGE plus graph EDA/community analysis.
+- **Phase 4 (`feat/streamlit-app`)** — visual app layer over metrics, EDA, users, items, and recommendations.
+- **Phase 5 (`feat/storage-vector-graph-dbs`)** — Milvus vector search and Neo4j graph storage.
+- **Phase 6 (`feat/llm-recommender-system`)** — LLM-guided explanation/reasoning over model outputs, vector search, and graph queries.
 
 ## Project structure
 
@@ -101,7 +156,7 @@ SVD currently wins rating prediction; content wins sampled ranking. The hybrid d
 config/        central configuration (datasets, preprocessing, evaluation)
 src/
   data/        download, parse, filter, split, build graph
-  models/      content-based, KNN, SVD, weighted hybrid, GraphSAGE
+  models/      content-based, KNN, SVD, weighted hybrid, advanced/graph models
   evaluation/  metrics and the comparison harness
   app/         Streamlit application
 tests/         pytest suite
@@ -119,10 +174,10 @@ pip install -r requirements.txt
 
 ## Status
 
-🚧 Phase 1 — **`feat/models` implemented; evaluation underway.**
+🚧 Phase 2 (`feat/advanced-models`): filtered category features, **train-only** review-text sentiment + user/item aggregates (consumed by the enriched content model), random + popularity baselines, and validation-slice α tuning. **Leakage rule:** held-out test review text never feeds the prediction for the same test interaction. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
 
 - Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
 - A first sampled `movies_and_tv` run is in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
-- **GraphSAGE** remains planned for **Phase 2** (not implemented).
+- **LightGCN/GraphSAGE**, Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
 
 Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.

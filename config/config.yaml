@@ -36,15 +36,34 @@ evaluation:
   k: 10                    # the K in Precision@K / Recall@K / F1@K
 
 hybrid:
-  alpha: 0.5               # weighted hybrid: alpha*CF + (1-alpha)*content
+  alpha: 0.5
+  tuning:
+    grid: [0.0, 0.25, 0.5, 0.75, 1.0]
+    validation_fraction: 0.1       # carve val slice off train, per-user chronological
+    random_seed: 42
+    max_users: 20000               # cap users used for tuning (keeps --tune-alpha safe on large data); null = all
+    max_val_rows: 50000            # cap validation rows scored per alpha; null = all
+    calibration_max_rows: 50000    # cap rows used to estimate calibrated-hybrid score stats; null = all
 
 models:
   embedding_model: "ibm-granite/granite-embedding-97m-multilingual-r2"
   embedding_fallback: "sentence-transformers/all-MiniLM-L6-v2"
-  embedding_device: "mps"       # Apple Silicon acceleration; use "cpu" only as fallback
+  # Embedding runtime auto-selects torch devices in order: cuda -> mps -> cpu.
   embedding_batch_size: 256     # explicit SentenceTransformer encode batch size
   embedding_max_seq_length: 256 # cap transformer tokens to avoid long-description blowups
   embedding_max_chars: 2000     # truncate long metadata blobs before tokenization
   ranking_num_negatives: 100   # sampled negatives per user for ranking metrics
   ranking_random_seed: 42      # fixed seed -> reproducible sampled ranking
-  candidate_cap: 1000          # optional upper bound for candidate sets
+
+advanced_features:
+  # generic roots stripped from item categories before vocab build
+  generic_category_roots:
+    - "Movies & TV"
+    - "Video Games"
+    - "Digital Music"
+  category_vocab_max: 256          # cap on multi-hot vocabulary size
+  category_min_doc_freq: 5         # category must appear on >= N items to be kept
+  sentiment_model: "distilbert-base-uncased-finetuned-sst-2-english"
+  sentiment_batch_size: 32
+  sentiment_max_chars: 1000        # truncate review text before tokenization
+  sentiment_max_rows: null         # null = score all train reviews; int caps it for dev runs

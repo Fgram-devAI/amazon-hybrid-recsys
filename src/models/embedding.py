@@ -15,6 +15,7 @@ import numpy as np
 
 class Embedder(Protocol):
     name: str
+    device: str
 
     def encode(self, texts: list[str]) -> np.ndarray:
         ...
@@ -24,6 +25,7 @@ class FakeEmbedder:
     """Deterministic bag-of-hashed-words embedding; shared words -> similar vectors."""
 
     name = "fake"
+    device = "cpu"
 
     def __init__(self, dim: int = 32):
         self.dim = dim
@@ -52,6 +54,7 @@ class SentenceTransformerEmbedder:
         from sentence_transformers import SentenceTransformer
 
         self.name = f"{model_name}|seq={max_seq_length}|max_chars={max_chars}"
+        self.device = str(device or "cpu")
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
         self.max_chars = max_chars
@@ -68,24 +71,36 @@ class SentenceTransformerEmbedder:
         return np.asarray(vecs, dtype=np.float32)
 
 
+def _available_torch_devices() -> list[str]:
+    """Return preferred accelerator order for torch-backed inference."""
+    import torch
+
+    devices: list[str] = []
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    if torch.backends.mps.is_available():
+        devices.append("mps")
+    devices.append("cpu")
+    return devices
+
+
 def build_embedder(config: dict) -> Embedder:
     """Build the preferred embedder, degrading model then device on failure.
 
-    Tries the primary model on the configured device, then the fallback model,
-    then retries both on CPU — so a device that is unavailable on the current
-    machine (e.g. "mps" on non-Apple hardware) does not break embedding.
+    Tries torch accelerators in CUDA -> MPS -> CPU order. For each device it
+    attempts the primary embedding model, then the fallback model.
     """
     models = config.get("models", {})
     primary = models.get("embedding_model", "ibm-granite/granite-embedding-97m-multilingual-r2")
     fallback = models.get("embedding_fallback", "sentence-transformers/all-MiniLM-L6-v2")
-    device = models.get("embedding_device", "cpu")
     kwargs = {
         "batch_size": int(models.get("embedding_batch_size", 256)),
         "max_seq_length": int(models.get("embedding_max_seq_length", 256)),
         "max_chars": int(models.get("embedding_max_chars", 2000)),
     }
 
-    candidates = [(primary, device), (fallback, device), (primary, "cpu"), (fallback, "cpu")]
+    devices = _available_torch_devices()
+    candidates = [(model_name, dev) for dev in devices for model_name in (primary, fallback)]
     seen = set()
     last_error = None
     for model_name, dev in candidates:
@@ -93,9 +108,15 @@ def build_embedder(config: dict) -> Embedder:
             continue
         seen.add((model_name, dev))
         try:
-            return SentenceTransformerEmbedder(model_name, device=dev, **kwargs)
+            embedder = SentenceTransformerEmbedder(model_name, device=dev, **kwargs)
+            print(f"[embeddings] selected device: {embedder.device}", flush=True)
+            return embedder
         except Exception as error:
             last_error = error
+            print(
+                f"[embeddings] could not initialize {model_name} on {dev}; trying next option",
+                flush=True,
+            )
     raise RuntimeError("could not build any embedder") from last_error
 
 
@@ -114,6 +135,8 @@ def load_or_compute_item_embeddings(
     embedder: Embedder,
     cache_dir: Path | str,
     content_hash: str,
+    *,
+    progress: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Return (embeddings (n,d) float32, item_ids list). Cache on disk."""
     cache_dir = Path(cache_dir)
@@ -124,10 +147,22 @@ def load_or_compute_item_embeddings(
     if emb_path.exists() and ids_path.exists() and meta_path.exists():
         meta = json.loads(meta_path.read_text())
         if meta.get("content_hash") == content_hash and meta.get("model_name") == embedder.name:
+            if progress:
+                print(
+                    f"[embeddings] cache hit: {emb_path} "
+                    f"({meta.get('metadata_row_count')} items, dim={meta.get('dim')})",
+                    flush=True,
+                )
             return np.load(emb_path), json.loads(ids_path.read_text())
 
     ids = metadata_df["parent_asin"].tolist()
     texts = metadata_df["text"].fillna("").tolist()
+    if progress:
+        print(
+            f"[embeddings] computing {len(ids)} item embeddings with {embedder.name} "
+            f"-> {cache_dir}",
+            flush=True,
+        )
     emb = np.asarray(embedder.encode(texts), dtype=np.float32)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -144,4 +179,10 @@ def load_or_compute_item_embeddings(
             }
         )
     )
+    if progress:
+        print(
+            f"[embeddings] wrote {emb.shape[0]} embeddings "
+            f"(dim={emb.shape[1]}) -> {emb_path}",
+            flush=True,
+        )
     return emb, ids

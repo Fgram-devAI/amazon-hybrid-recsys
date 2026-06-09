@@ -12,6 +12,7 @@ scikit-learn
 scikit-surprise        # SVD / SVD++ / KNN baselines + RMSE/MAE  (use Python 3.10/3.11)
 implicit               # ALS for implicit/collaborative filtering
 sentence-transformers  # Granite/MiniLM text embeddings for content-based model
+transformers           # HF sentiment pipeline for real runs (tests use FakeSentimentModel)
 
 # App + plots
 streamlit
