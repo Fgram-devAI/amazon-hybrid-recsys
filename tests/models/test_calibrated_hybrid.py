@@ -1,0 +1,61 @@
+"""Tests for the calibrated hybrid (alpha + per-component z-score)."""
+
+import pandas as pd
+import pytest
+
+from src.models.base import Recommender
+from src.models.calibrated_hybrid import CalibratedHybrid
+
+_TRAIN = pd.DataFrame(
+    [
+        {"user_id": "u1", "parent_asin": "i1", "rating": 5.0},
+        {"user_id": "u1", "parent_asin": "i2", "rating": 3.0},
+    ]
+)
+
+
+class ConstantStub(Recommender):
+    def __init__(self, value: float) -> None:
+        super().__init__()
+        self.value = value
+
+    def fit(self, train, metadata=None):
+        self._fit_means(train)
+        return self
+
+    def predict(self, user_id, parent_asin):
+        return self.value
+
+
+def test_calibration_disabled_blends_exactly_like_weighted_hybrid():
+    hybrid = CalibratedHybrid(
+        ConstantStub(4.0), ConstantStub(2.0), alpha=0.5, calibrate=False
+    ).fit(_TRAIN)
+    assert hybrid.predict("u1", "i1") == pytest.approx(3.0)
+
+
+def test_calibration_uses_training_mean_when_components_differ():
+    # When calibrate=True the blend uses z-scores recentred to the global rating mean.
+    cf = ConstantStub(4.0)
+    content = ConstantStub(2.0)
+    hybrid = CalibratedHybrid(cf, content, alpha=0.5, calibrate=True).fit(_TRAIN)
+    # Constant predictions have zero training spread -> z-score is 0, so the
+    # calibrated output equals the global training mean (4 in this fixture).
+    assert hybrid.predict("u1", "i1") == pytest.approx(hybrid.global_mean_)
+
+
+def test_alpha_endpoints_pick_the_right_component_uncalibrated():
+    cf = ConstantStub(4.5)
+    content = ConstantStub(1.5)
+    assert (
+        CalibratedHybrid(cf, content, alpha=1.0, calibrate=False)
+        .fit(_TRAIN)
+        .predict("u1", "i1")
+        == 4.5
+    )
+    assert (
+        CalibratedHybrid(cf, content, alpha=0.0, calibrate=False)
+        .fit(_TRAIN)
+        .predict("u1", "i1")
+        == 1.5
+    )
