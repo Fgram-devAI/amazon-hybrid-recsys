@@ -47,6 +47,7 @@ class LightGCNRecommender(GraphRecommender):
         self._model: LightGCN | None = None
         self._calibration_beta: float | None = None
         self._calibration_intercept: float | None = None
+        self._final_embeddings: torch.Tensor | None = None
 
     def fit(self, train: pd.DataFrame, metadata: object = None) -> "LightGCNRecommender":
         torch.manual_seed(self.seed)
@@ -70,6 +71,12 @@ class LightGCNRecommender(GraphRecommender):
         # Final fit on full train
         self._graph = build_graph(train, min_rating_positive=self.min_rating_positive)
         self._model = self._train_bpr(self._graph)
+
+        # Cache final propagated embeddings so predict() is O(D) per call, not
+        # O(full-graph forward) — eval loops do tens of thousands of predicts.
+        final_prop = self._graph.positive_propagation_edge_index.to(self.device)
+        with torch.no_grad():
+            self._final_embeddings = self._model.get_embedding(final_prop).detach()
         return self
 
     def _train_bpr(self, graph: BipartiteGraph) -> LightGCN:
@@ -98,8 +105,14 @@ class LightGCNRecommender(GraphRecommender):
                 # sampled negatives in item index space, shifted to unified node space
                 neg_local = rng.integers(0, n_items, size=u.shape[0])
                 neg_i = torch.from_numpy(neg_local).to(self.device) + item_offset
-                pos_score = model(prop, edge_label_index=torch.stack([u, pos_i]))
-                neg_score = model(prop, edge_label_index=torch.stack([u, neg_i]))
+                # Single propagation per batch (vs. two model() calls): gather
+                # u/pos/neg embeddings from one get_embedding pass, score by dot.
+                h = model.get_embedding(prop)
+                u_emb = h[u]
+                pos_emb = h[pos_i]
+                neg_emb = h[neg_i]
+                pos_score = (u_emb * pos_emb).sum(dim=-1)
+                neg_score = (u_emb * neg_emb).sum(dim=-1)
                 loss = F.softplus(neg_score - pos_score).mean()
                 optimizer.zero_grad()
                 loss.backward()
@@ -131,7 +144,8 @@ class LightGCNRecommender(GraphRecommender):
         i_t = torch.tensor(i_global, dtype=torch.long, device=self.device)
         prop = graph.positive_propagation_edge_index.to(self.device)
         with torch.no_grad():
-            raw = model(prop, edge_label_index=torch.stack([u_t, i_t])).cpu().numpy()
+            h = model.get_embedding(prop)
+            raw = (h[u_t] * h[i_t]).sum(dim=-1).cpu().numpy()
         y = np.asarray(ratings, dtype=np.float32)
         if raw.std() == 0:
             return 0.0, float(y.mean())
@@ -140,19 +154,14 @@ class LightGCNRecommender(GraphRecommender):
         return float(beta), float(intercept)
 
     def predict(self, user_id: str, parent_asin: str) -> float:
-        if self._model is None or self._graph is None:
+        if self._model is None or self._graph is None or self._final_embeddings is None:
             return self._clip(self._fallback(user_id, parent_asin))
         uid = self._graph.user_index.get(user_id)
         iid = self._graph.item_index.get(parent_asin)
         if uid is None or iid is None:
             return self._clip(self._fallback(user_id, parent_asin))
-        u_t = torch.tensor([uid], dtype=torch.long, device=self.device)
-        i_t = torch.tensor(
-            [iid + self._graph.item_offset], dtype=torch.long, device=self.device,
-        )
-        prop = self._graph.positive_propagation_edge_index.to(self.device)
-        with torch.no_grad():
-            raw = self._model(prop, edge_label_index=torch.stack([u_t, i_t])).item()
+        h = self._final_embeddings
+        raw = float((h[uid] * h[iid + self._graph.item_offset]).sum().item())
         beta = self._calibration_beta if self._calibration_beta is not None else 0.0
         intercept = (
             self._calibration_intercept
@@ -167,6 +176,7 @@ class LightGCNRecommender(GraphRecommender):
             "model": self._model.state_dict(),
             "calibration_beta": self._calibration_beta,
             "calibration_intercept": self._calibration_intercept,
+            "final_embeddings": self._final_embeddings,
         }
 
     def load_state_dict(self, state: dict[str, object]) -> None:
@@ -174,3 +184,4 @@ class LightGCNRecommender(GraphRecommender):
         self._model.load_state_dict(state["model"])  # type: ignore[arg-type]
         self._calibration_beta = state.get("calibration_beta")  # type: ignore[assignment]
         self._calibration_intercept = state.get("calibration_intercept")  # type: ignore[assignment]
+        self._final_embeddings = state.get("final_embeddings")  # type: ignore[assignment]
