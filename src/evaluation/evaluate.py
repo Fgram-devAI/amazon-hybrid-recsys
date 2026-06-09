@@ -176,12 +176,18 @@ def build_models(
     advanced=False,
     alpha=None,
     progress=False,
+    include_ablation=False,
 ):
     """Construct the model set, sharing component instances with the hybrids.
 
     When ``advanced`` is True, also registers random + popularity baselines, the
     enriched content recommender, and a calibrated hybrid that reuses the svd +
-    enriched-content components.
+    enriched-content components. When ``include_ablation`` is also True, the
+    legacy ``content_enriched`` row is replaced by explicit
+    ``content_enriched_with_sentiment`` and ``content_enriched_no_sentiment``
+    variants that share the embedder + cache_dir but differ only in whether
+    item-sentiment columns and the user-generosity offset are consumed -- so the
+    sentiment contribution can be measured head-to-head.
     """
     from src.models.baselines import PopularityRecommender, RandomRecommender
     from src.models.calibrated_hybrid import CalibratedHybrid
@@ -217,7 +223,23 @@ def build_models(
             # train-only sentiment/user/item aggregates (consumed if the offline job ran)
             review_features_dir=af_dir,
         )
-        models["content_enriched"] = content_enriched
+        if include_ablation:
+            # Ablation mode: register explicit names only. Omit the legacy
+            # `content_enriched` row so the same sentiment-aware model is not
+            # fitted/scored twice in the same evaluation table.
+            models["content_enriched_with_sentiment"] = content_enriched
+            models["content_enriched_no_sentiment"] = ContentEnrichedRecommender(
+                embedder,
+                generic_roots=af.get("generic_category_roots", []),
+                max_vocab=int(af.get("category_vocab_max", 256)),
+                min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+                cache_dir=af_dir / "title_desc_embeddings",
+                review_features_dir=af_dir,
+                use_item_sentiment=False,
+                use_user_offset=False,
+            )
+        else:
+            models["content_enriched"] = content_enriched
         models["calibrated_hybrid"] = CalibratedHybrid(
             svd,
             content_enriched,
