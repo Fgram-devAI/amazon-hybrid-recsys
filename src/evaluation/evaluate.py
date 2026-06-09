@@ -270,6 +270,10 @@ def main(argv=None):
     parser.add_argument("--quiet", action="store_true", help="suppress progress logs")
     parser.add_argument("--advanced", action="store_true",
                         help="add random/popularity baselines + enriched content + calibrated hybrid")
+    parser.add_argument(
+        "--include-ablation", action="store_true",
+        help="register content_enriched_with_sentiment and content_enriched_no_sentiment for direct comparison",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -277,6 +281,9 @@ def main(argv=None):
         help="sweep hybrid.tuning.grid on a validation slice carved from train; pick best alpha",
     )
     args = parser.parse_args(argv)
+
+    if args.include_ablation and not args.advanced:
+        parser.error("--include-ablation requires --advanced")
 
     config = load_config(args.config)
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
@@ -335,6 +342,7 @@ def main(argv=None):
         advanced=args.advanced,
         alpha=chosen_alpha,
         progress=not args.quiet,
+        include_ablation=args.include_ablation,
     )
 
     table = evaluate_models(
