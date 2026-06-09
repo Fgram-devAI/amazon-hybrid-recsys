@@ -94,30 +94,72 @@ class LightGCNRecommender(GraphRecommender):
         n_items = len(graph.item_index)
         item_offset = graph.item_offset
         rng = np.random.default_rng(self.seed)
+        positives_by_user = self._positive_items_by_user(graph)
 
         model.train()
         for _ in range(self.epochs):
-            perm = torch.randperm(pos_edges.shape[1])
+            h = model.get_embedding(prop)
+            perm = torch.randperm(pos_edges.shape[1], device=self.device)
+            optimizer.zero_grad()
+            n_batches = int(np.ceil(perm.shape[0] / self.batch_size))
             for start in range(0, perm.shape[0], self.batch_size):
                 idx = perm[start:start + self.batch_size]
                 u = pos_edges[0, idx]
                 pos_i = pos_edges[1, idx]
-                # sampled negatives in item index space, shifted to unified node space
-                neg_local = rng.integers(0, n_items, size=u.shape[0])
-                neg_i = torch.from_numpy(neg_local).to(self.device) + item_offset
-                # Single propagation per batch (vs. two model() calls): gather
-                # u/pos/neg embeddings from one get_embedding pass, score by dot.
-                h = model.get_embedding(prop)
+                neg_i = self._sample_negatives(
+                    u.cpu().numpy(),
+                    n_items=n_items,
+                    item_offset=item_offset,
+                    positives_by_user=positives_by_user,
+                    rng=rng,
+                ).to(self.device)
                 u_emb = h[u]
                 pos_emb = h[pos_i]
                 neg_emb = h[neg_i]
-                pos_score = (u_emb * pos_emb).sum(dim=-1)
-                neg_score = (u_emb * neg_emb).sum(dim=-1)
+                pos_score = (u_emb.unsqueeze(1) * pos_emb.unsqueeze(1)).sum(dim=-1)
+                neg_score = (u_emb.unsqueeze(1) * neg_emb).sum(dim=-1)
                 loss = F.softplus(neg_score - pos_score).mean()
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                is_last = (start // self.batch_size) == n_batches - 1
+                loss.backward(retain_graph=not is_last)
+            optimizer.step()
         return model.eval()
+
+    def _positive_items_by_user(self, graph: BipartiteGraph) -> dict[int, set[int]]:
+        positives: dict[int, set[int]] = {}
+        edges = graph.positive_edge_label_index.cpu().numpy()
+        for user, item_global in zip(edges[0], edges[1]):
+            positives.setdefault(int(user), set()).add(int(item_global - graph.item_offset))
+        return positives
+
+    def _sample_negatives(
+        self,
+        users: np.ndarray,
+        *,
+        n_items: int,
+        item_offset: int,
+        positives_by_user: dict[int, set[int]],
+        rng: np.random.Generator,
+    ) -> torch.Tensor:
+        """Sample item negatives not present in each user's positive train set."""
+        negatives = np.empty((len(users), self.num_negatives), dtype=np.int64)
+        for row, user in enumerate(users):
+            seen = positives_by_user.get(int(user), set())
+            if len(seen) >= n_items:
+                negatives[row, :] = rng.integers(0, n_items, size=self.num_negatives)
+                continue
+            for col in range(self.num_negatives):
+                candidate = int(rng.integers(0, n_items))
+                attempts = 0
+                while candidate in seen and attempts < 100:
+                    candidate = int(rng.integers(0, n_items))
+                    attempts += 1
+                if candidate in seen:
+                    for fallback in range(n_items):
+                        if fallback not in seen:
+                            candidate = fallback
+                            break
+                negatives[row, col] = candidate
+        return torch.from_numpy(negatives + item_offset)
 
     def _fit_calibration(
         self,
