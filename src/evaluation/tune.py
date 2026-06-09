@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from src.evaluation.metrics import rmse
 from src.models.base import Recommender
@@ -65,6 +66,7 @@ def tune_alpha(
     seed: int,
     max_users: int | None = None,
     max_val_rows: int | None = None,
+    progress: bool = False,
 ) -> TuningResult:
     """Sweep alpha; return the alpha minimizing validation RMSE.
 
@@ -82,10 +84,21 @@ def tune_alpha(
 
     scores: list[tuple[float, float]] = []
     y_true = val["rating"].to_numpy(dtype=float)
-    for alpha in grid:
+    for alpha in tqdm(grid, desc="[tune] alpha grid", unit="alpha", disable=not progress):
         model = hybrid_factory(float(alpha)).fit(train_only, metadata)
+        val_pairs = zip(val["user_id"], val["parent_asin"])
         y_pred = np.array(
-            [model.predict(u, i) for u, i in zip(val["user_id"], val["parent_asin"])],
+            [
+                model.predict(u, i)
+                for u, i in tqdm(
+                    val_pairs,
+                    total=len(val),
+                    desc=f"[tune] alpha={float(alpha):.3g}",
+                    unit="row",
+                    leave=False,
+                    disable=not progress,
+                )
+            ],
             dtype=float,
         )
         scores.append((float(alpha), rmse(y_true, y_pred)))

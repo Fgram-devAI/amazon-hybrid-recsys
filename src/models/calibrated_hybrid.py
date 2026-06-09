@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from .base import Recommender
 
@@ -25,6 +26,7 @@ class CalibratedHybrid(Recommender):
         calibrate: bool = True,
         calibration_max_rows: int | None = None,
         random_state: int = 42,
+        progress: bool = False,
     ) -> None:
         super().__init__()
         self.cf = cf
@@ -33,6 +35,7 @@ class CalibratedHybrid(Recommender):
         self.calibrate = bool(calibrate)
         self.calibration_max_rows = calibration_max_rows
         self.random_state = int(random_state)
+        self.progress = bool(progress)
         self.cf_mean_: float = 0.0
         self.cf_std_: float = 1.0
         self.content_mean_: float = 0.0
@@ -58,22 +61,30 @@ class CalibratedHybrid(Recommender):
                     n=self.calibration_max_rows,
                     random_state=self.random_state,
                 )
+            cf_pairs = zip(calibration_rows["user_id"], calibration_rows["parent_asin"])
             cf_scores = np.array(
                 [
                     self.cf.predict(u, i)
-                    for u, i in zip(
-                        calibration_rows["user_id"],
-                        calibration_rows["parent_asin"],
+                    for u, i in tqdm(
+                        cf_pairs,
+                        total=len(calibration_rows),
+                        desc="[calibrated_hybrid] cf calibration",
+                        unit="row",
+                        disable=not self.progress,
                     )
                 ],
                 dtype=float,
             )
+            content_pairs = zip(calibration_rows["user_id"], calibration_rows["parent_asin"])
             content_scores = np.array(
                 [
                     self.content.predict(u, i)
-                    for u, i in zip(
-                        calibration_rows["user_id"],
-                        calibration_rows["parent_asin"],
+                    for u, i in tqdm(
+                        content_pairs,
+                        total=len(calibration_rows),
+                        desc="[calibrated_hybrid] content calibration",
+                        unit="row",
+                        disable=not self.progress,
                     )
                 ],
                 dtype=float,

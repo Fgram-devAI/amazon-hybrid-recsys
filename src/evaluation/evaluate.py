@@ -5,6 +5,7 @@ from time import perf_counter
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from .metrics import mae, precision_recall_f1_at_k, relevant_items_by_user, rmse
 
@@ -90,10 +91,17 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
             print(f"[{dataset}] predicting ratings for {name} on {len(rating_test):,} rows ...", flush=True)
         rating_start = perf_counter()
         y_true = rating_test["rating"].to_numpy(dtype=float)
+        rating_pairs = zip(rating_test["user_id"], rating_test["parent_asin"])
         y_pred = np.array(
             [
                 model.predict(u, i)
-                for u, i in zip(rating_test["user_id"], rating_test["parent_asin"])
+                for u, i in tqdm(
+                    rating_pairs,
+                    total=len(rating_test),
+                    desc=f"[{dataset}] {name} ratings",
+                    unit="row",
+                    disable=not progress,
+                )
             ]
         )
         if progress:
@@ -108,7 +116,13 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         if progress:
             print(f"[{dataset}] ranking candidates for {name} ...", flush=True)
         ranking_start = perf_counter()
-        for user, rel in relevant.items():
+        for user, rel in tqdm(
+            relevant.items(),
+            total=len(relevant),
+            desc=f"[{dataset}] {name} ranking",
+            unit="user",
+            disable=not progress,
+        ):
             exclude = user_train_items.get(user, set()) | rel
             negatives = sample_negatives(all_items, exclude, num_negatives, rng)
             candidates = list(rel) + negatives
@@ -161,6 +175,7 @@ def build_models(
     no_knn=False,
     advanced=False,
     alpha=None,
+    progress=False,
 ):
     """Construct the model set, sharing component instances with the hybrids.
 
@@ -212,6 +227,7 @@ def build_models(
             .get("tuning", {})
             .get("calibration_max_rows"),
             random_state=seed,
+            progress=progress,
         )
     return models
 
@@ -285,6 +301,7 @@ def main(argv=None):
             seed=int(tuning.get("random_seed", 42)),
             max_users=tuning.get("max_users"),       # cap users for tuning (large-data safe)
             max_val_rows=tuning.get("max_val_rows"),  # cap validation rows scored per alpha
+            progress=not args.quiet,
         )
         chosen_alpha = result.best_alpha
         if not args.quiet:
@@ -292,7 +309,10 @@ def main(argv=None):
 
     models = build_models(
         config, args.dataset, embedder,
-        no_knn=args.no_knn, advanced=args.advanced, alpha=chosen_alpha,
+        no_knn=args.no_knn,
+        advanced=args.advanced,
+        alpha=chosen_alpha,
+        progress=not args.quiet,
     )
 
     table = evaluate_models(
