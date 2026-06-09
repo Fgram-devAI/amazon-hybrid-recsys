@@ -177,6 +177,7 @@ def build_models(
     alpha=None,
     progress=False,
     include_ablation=False,
+    graph=False,
 ):
     """Construct the model set, sharing component instances with the hybrids.
 
@@ -251,6 +252,40 @@ def build_models(
             random_state=seed,
             progress=progress,
         )
+
+    if graph:
+        from src.models.graphsage import GraphSAGERecommender
+        from src.models.lightgcn import LightGCNRecommender
+
+        gc = config.get("graph", {})
+        af_dir = Path(config["processed_dir"]) / dataset / "advanced_features"
+        models["lightgcn"] = LightGCNRecommender(
+            embedding_dim=int(gc.get("embedding_dim", 64)),
+            n_layers=int(gc.get("n_layers", 2)),
+            epochs=int(gc.get("epochs", 10)),
+            lr=float(gc.get("lr", 0.005)),
+            num_negatives=int(gc.get("num_negatives", 1)),
+            batch_size=int(gc.get("batch_size", 1024)),
+            seed=int(gc.get("seed", 42)),
+            device=str(gc.get("device", "auto")),
+            min_rating_positive=float(gc.get("min_rating_positive", 4.0)),
+            validation_fraction=float(gc.get("validation_fraction", 0.1)),
+        )
+        models["graphsage"] = GraphSAGERecommender(
+            embedder=embedder,
+            generic_roots=af.get("generic_category_roots", []),
+            max_vocab=int(af.get("category_vocab_max", 256)),
+            min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+            hidden_dim=int(gc.get("embedding_dim", 64)),
+            n_layers=int(gc.get("n_layers", 2)),
+            epochs=int(gc.get("epochs", 10)),
+            lr=float(gc.get("lr", 0.005)),
+            batch_size=int(gc.get("batch_size", 1024)),
+            seed=int(gc.get("seed", 42)),
+            device=str(gc.get("device", "auto")),
+            cache_dir=af_dir / "title_desc_embeddings",
+            review_features_dir=af_dir,
+        )
     return models
 
 
@@ -273,6 +308,10 @@ def main(argv=None):
     parser.add_argument(
         "--include-ablation", action="store_true",
         help="register content_enriched_with_sentiment and content_enriched_no_sentiment for direct comparison",
+    )
+    parser.add_argument(
+        "--graph", action="store_true",
+        help="register lightgcn + graphsage (requires torch_geometric)",
     )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
@@ -343,6 +382,7 @@ def main(argv=None):
         alpha=chosen_alpha,
         progress=not args.quiet,
         include_ablation=args.include_ablation,
+        graph=args.graph,
     )
 
     table = evaluate_models(

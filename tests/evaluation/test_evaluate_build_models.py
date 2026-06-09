@@ -87,3 +87,33 @@ def test_build_models_without_ablation_omits_ablation_variants():
     assert "content_enriched_with_sentiment" not in models
     # Backward-compat alias still present under the legacy name.
     assert "content_enriched" in models
+
+
+def test_build_models_with_graph_flag_registers_lightgcn_and_graphsage():
+    from src.evaluation.evaluate import build_models
+
+    config = {
+        "processed_dir": "data/processed",
+        "models": {"ranking_random_seed": 42},
+        "advanced_features": {},
+        "hybrid": {"alpha": 0.5},
+        "graph": {
+            "embedding_dim": 4, "n_layers": 1, "epochs": 1, "lr": 0.05,
+            "batch_size": 4, "num_negatives": 1, "device": "cpu", "seed": 0,
+            "min_rating_positive": 4.0, "validation_fraction": 0.1,
+        },
+    }
+
+    class _FakeEmbedder:
+        name = "fake"
+        device = "cpu"
+        def encode(self, texts):
+            import numpy as np
+            return np.zeros((len(texts), 4), dtype="float32")
+
+    models = build_models(
+        config, dataset="ds", embedder=_FakeEmbedder(),
+        no_knn=True, advanced=False, graph=True,
+    )
+    assert "lightgcn" in models
+    assert "graphsage" in models
