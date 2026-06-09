@@ -251,6 +251,13 @@ def main(argv=None):
 
     mc = config.get("models", {})
     embedder = build_embedder(config)
+    if not args.quiet:
+        print(f"[{args.dataset}] embedder device: {embedder.device}", flush=True)
+        print(
+            f"[{args.dataset}] collaborative filtering device: cpu "
+            "(scikit-surprise SVD/KNN)",
+            flush=True,
+        )
 
     chosen_alpha = args.alpha
     if args.tune_alpha:

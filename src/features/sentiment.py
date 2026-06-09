@@ -23,6 +23,7 @@ _NEGATIVE_WORDS = {"hate", "terrible", "bad", "awful", "boring", "broken", "wors
 
 class SentimentModel(Protocol):
     name: str
+    device: str
 
     def score(self, texts: list[str]) -> list[dict]:
         ...
@@ -32,6 +33,7 @@ class FakeSentimentModel:
     """Lexicon-based deterministic sentiment for tests; never downloads anything."""
 
     name = "fake-sentiment-v1"
+    device = "cpu"
 
     def score(self, texts: list[str]) -> list[dict]:
         out = []
@@ -157,6 +159,7 @@ def score_train_reviews(
         "row_count": len(rows),
         "train_row_count": len(train_keys),
         "max_chars": max_chars,
+        "device": model.device,
         "version": 1,
         "key_hash": hashlib.sha256(
             json.dumps(sorted(map(list, train_keys))).encode("utf-8")
@@ -168,14 +171,43 @@ def score_train_reviews(
 
 def build_sentiment_model(config: dict) -> SentimentModel:
     """Construct the real HF sentiment model. Never call this from tests."""
+    import torch
     from transformers import pipeline  # local import keeps tests free of HF
 
     model_name = config["advanced_features"]["sentiment_model"]
-    pipe = pipeline("sentiment-analysis", model=model_name, truncation=True)  # type: ignore[call-overload]
+    devices: list[str] = []
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    if torch.backends.mps.is_available():
+        devices.append("mps")
+    devices.append("cpu")
+
+    pipe = None
+    selected_device = "cpu"
+    last_error: Exception | None = None
+    for device in devices:
+        try:
+            pipe = pipeline(
+                "sentiment-analysis",  # type: ignore[reportArgumentType]
+                model=model_name,
+                truncation=True,
+                device=torch.device(device),
+            )
+            selected_device = device
+            break
+        except Exception as error:
+            last_error = error
+            print(
+                f"[sentiment] could not initialize {model_name} on {device}; trying next device",
+                flush=True,
+            )
+    if pipe is None:
+        raise RuntimeError(f"could not initialize sentiment model {model_name}") from last_error
 
     class _HFSentimentModel:
         # populated below so `name` is the exact configured model id
         name: str = model_name
+        device: str = selected_device
 
         def score(self, texts: list[str]) -> list[dict]:
             outputs = pipe(texts, batch_size=int(config["advanced_features"]["sentiment_batch_size"]))

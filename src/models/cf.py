@@ -3,6 +3,9 @@
 SVD is the primary full-scale CF baseline. Item-KNN is provided too, but its
 item-item similarity matrix is O(n_items^2) memory, so the caller must cap or
 subsample items on large datasets (see evaluate.py guardrails).
+
+scikit-surprise runs on CPU; CUDA/MPS acceleration is not available for these
+baselines without replacing the backend.
 """
 
 from surprise import SVD, Dataset, KNNWithMeans, Reader
@@ -14,6 +17,7 @@ class _SurpriseRecommender(Recommender):
     def __init__(self, algo):
         super().__init__()
         self._algo = algo
+        self.device = "cpu"
 
     def fit(self, train, metadata=None):
         self._fit_means(train)

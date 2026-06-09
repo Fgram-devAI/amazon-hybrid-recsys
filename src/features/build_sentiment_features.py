@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(f"[{args.dataset}] building sentiment model: {model_name}", flush=True)
     model = FakeSentimentModel() if args.fake else build_sentiment_model(config)
+    print(f"[{args.dataset}] sentiment device: {model.device}", flush=True)
     max_rows = (
         args.max_rows
         if args.max_rows is not None
