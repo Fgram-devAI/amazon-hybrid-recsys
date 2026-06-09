@@ -96,7 +96,8 @@ Advanced models (enriched content, sentiment, user/item aggregates, baselines, a
 
 Full advanced run on the primary benchmark (`video_games`, 5-core, 79,248 ranking users).
 The sentiment features were built from train-only review text with
-`distilbert-base-uncased-finetuned-sst-2-english` on MPS:
+`distilbert-base-uncased-finetuned-sst-2-english` on MPS. The table below uses
+the RMSE-tuned alpha (`α = 1.0`):
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
 |---|---:|---:|---:|---:|---:|
@@ -106,12 +107,26 @@ The sentiment features were built from train-only review text with
 | random | 1.2569 | 0.9780 | 0.0152 | 0.0975 | 0.0249 |
 | popularity | 1.2270 | 0.9059 | **0.0776** | **0.5108** | **0.1284** |
 | content_enriched | 1.2660 | 0.8258 | 0.0755 | 0.5014 | 0.1250 |
-| calibrated_hybrid | 1.1654 | **0.7891** | 0.0528 | 0.3126 | 0.0848 |
+| calibrated_hybrid | 1.1654 | 0.7891 | 0.0528 | 0.3126 | 0.0848 |
 
-SVD remains the strongest RMSE model, while calibrated hybrid gives the best MAE.
-Popularity is a very strong sampled-ranking baseline; the enriched content model is
-close behind it on P/R/F1 while improving substantially over plain content on RMSE/MAE.
-The tuned alpha selected `1.0`, so the classic weighted hybrid collapses to SVD in this run.
+SVD remains the strongest RMSE model. Popularity is a very strong sampled-ranking
+baseline; the enriched content model is close behind it on P/R/F1 while improving
+substantially over plain content on RMSE/MAE. The RMSE-tuned alpha selected `1.0`,
+so the classic weighted hybrid collapses to SVD in this run.
+
+Fixed-alpha sweep for the calibrated hybrid (`α · SVD + (1 - α) · content_enriched`):
+
+| α | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---:|---:|---:|---:|---:|---:|
+| 0.75 | **1.1501** | 0.7698 | 0.0556 | 0.3330 | 0.0896 |
+| 0.60 | 1.1596 | **0.7664** | 0.0588 | 0.3562 | 0.0950 |
+| 0.50 | 1.1737 | 0.7679 | 0.0619 | 0.3789 | 0.1003 |
+| 0.40 | 1.1938 | 0.7722 | **0.0662** | **0.4093** | **0.1076** |
+
+This sweep shows the expected trade-off: lower `α` uses more enriched-content signal
+and improves hybrid ranking, while higher `α` stays closer to SVD for rating RMSE.
+The standalone `content_enriched` row remains the strongest advanced-content ranking
+result (`F1@10 = 0.1250`), narrowly below popularity (`F1@10 = 0.1284`).
 
 Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 
