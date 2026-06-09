@@ -149,6 +149,26 @@ Reproduction command:
   --dataset video_games --no-knn --advanced --include-ablation --alpha 0.6
 ```
 
+## Graph Recommender Models (LightGCN + GraphSAGE)
+
+The graph models extend the comparison table with two PyTorch Geometric–backed
+recommenders fitted on the train-only bipartite user-item graph (test interactions
+are never part of the message-passing graph):
+
+- **LightGCN** — pure-collaborative, BPR objective for top-K ranking. Its RMSE/MAE
+  row comes from a calibrated score-to-rating head whose `(beta, intercept)` are
+  fit on a validation slice carved from train, so the comparison row stays honest.
+- **GraphSAGE** — content + collaborative fusion. Item nodes carry the enriched
+  feature matrix (text embedding ⊕ filtered categories ⊕ numeric ⊕ train-only
+  item-sentiment); user nodes carry train-only behavioural aggregates. Trained
+  as edge regression on observed train ratings (the rating is never an input feature).
+
+Run: `./.venv/bin/python -m src.evaluation.evaluate --dataset video_games --no-knn --graph [--max-eval-users 5000]`
+
+Dependencies installed once via `pip install -r requirements.txt` (heavy: torch
+pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. On
+darwin arm64 the graph models run on CPU by default; MPS is opportunistic.
+
 Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
