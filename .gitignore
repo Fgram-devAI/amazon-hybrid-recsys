@@ -34,3 +34,5 @@ env/
 docs/
 CLAUDE.md
 .claude/
+.agents/
+skills-lock.json
