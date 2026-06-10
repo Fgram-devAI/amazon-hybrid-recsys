@@ -54,7 +54,7 @@ Raw and processed data are reproducible local artifacts and are not committed.
 | SVD CF (matrix factorization) | ratings matrix |
 | Weighted hybrid | both (blended at output) |
 | Enriched content/review models | item metadata + train-only review feedback |
-| LightGCN / GraphSAGE | train-only user-item graph, optionally node features |
+| LightGCN / GraphSAGE / GraphSAGE-BPR | train-only user-item graph, optionally node features |
 
 All models share one interface — `fit`, `predict(user, item)`, `recommend(user, K)` — so the evaluation harness and app treat them identically.
 
@@ -179,7 +179,7 @@ which is plausible because it is trained as rating edge regression.
 
 ## Graph Recommender Models (LightGCN + GraphSAGE)
 
-The graph models extend the comparison table with two PyTorch Geometric–backed
+The graph models extend the comparison table with PyTorch Geometric–backed
 recommenders fitted on the train-only bipartite user-item graph (test interactions
 are never part of the message-passing graph):
 
@@ -190,6 +190,9 @@ are never part of the message-passing graph):
   feature matrix (text embedding ⊕ filtered categories ⊕ numeric ⊕ train-only
   item-sentiment); user nodes carry train-only behavioural aggregates. Trained
   as edge regression on observed train ratings (the rating is never an input feature).
+- **GraphSAGE-BPR** — same enriched GraphSAGE encoder, but trained with pairwise
+  BPR on `rating >= 4` positives. This tests whether content/user node features
+  can help graph ranking when the objective matches top-K recommendation.
 
 Run graph training/evaluation:
 
@@ -237,6 +240,28 @@ Then evaluate the tagged checkpoint:
   --output data/processed/video_games/metrics_lightgcn_40ep_neg4_full.json
 ```
 
+Train GraphSAGE-BPR without overwriting regression GraphSAGE:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate \
+  --dataset video_games \
+  --graph-only \
+  --only-model graphsage_bpr \
+  --graph-epochs 20 \
+  --graph-num-negatives 4 \
+  --checkpoint-tag 20ep_neg4 \
+  --train-only
+```
+
+Then evaluate the tagged checkpoint:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate_graphsage_bpr_checkpoint \
+  --dataset video_games \
+  --checkpoint data/processed/video_games/graph_checkpoints/graphsage_bpr_20ep_neg4.pt \
+  --output data/processed/video_games/metrics_graphsage_bpr_20ep_neg4_full.json
+```
+
 Re-evaluate stored graph checkpoints without retraining:
 
 ```bash
@@ -255,6 +280,11 @@ GraphSAGE is currently a rating-regression graph model: its 10-epoch checkpoint
 wins RMSE/MAE against LightGCN but is weak on sampled ranking. Do not expect
 ranking gains from simply increasing epochs; a future ranking-oriented GraphSAGE
 variant should change the objective/head rather than only `lr` or `epochs`.
+GraphSAGE-BPR is that ranking-oriented variant.
+
+Graph EDA/community detection (item-item projections, Louvain/Leiden/spectral
+clustering, category alignment) should live on a separate branch/spec because it
+is interpretability/analysis work, not model training.
 
 Dependencies installed once via `pip install -r requirements.txt` (heavy: torch
 pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. Graph
@@ -292,11 +322,13 @@ advanced_features/
 graph_checkpoints/
   lightgcn.pt
   graphsage.pt
+  graphsage_bpr.pt
   lightgcn_20ep.pt        # optional tagged rerun
   lightgcn_40ep_neg4.pt   # optional BPR negative-sampling rerun
 metrics.json              # latest normal evaluator run
 metrics_lightgcn_checkpoint.json
 metrics_graphsage_checkpoint.json
+metrics_graphsage_bpr_checkpoint.json
 ```
 
 ## Setup

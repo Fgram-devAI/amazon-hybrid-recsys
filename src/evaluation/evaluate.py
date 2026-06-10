@@ -91,7 +91,7 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
         checkpoint_path = None
-        if checkpoint_dir is not None and name in {"lightgcn", "graphsage"}:
+        if checkpoint_dir is not None and name in {"lightgcn", "graphsage", "graphsage_bpr"}:
             suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
             path = Path(checkpoint_dir) / f"{name}{suffix}.pt"
             model.save_checkpoint(path)
@@ -287,6 +287,7 @@ def build_models(
 
     if graph:
         from src.models.graphsage import GraphSAGERecommender
+        from src.models.graphsage_bpr import GraphSAGEBPRRecommender
         from src.models.lightgcn import LightGCNRecommender
 
         gc = config.get("graph", {})
@@ -318,6 +319,24 @@ def build_models(
             device=str(gc.get("device", "auto")),
             cache_dir=af_dir / "title_desc_embeddings",
             review_features_dir=af_dir,
+            progress=progress,
+        )
+        models["graphsage_bpr"] = GraphSAGEBPRRecommender(
+            embedder=embedder,
+            generic_roots=af.get("generic_category_roots", []),
+            max_vocab=int(af.get("category_vocab_max", 256)),
+            min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+            hidden_dim=int(gc.get("embedding_dim", 64)),
+            n_layers=int(gc.get("n_layers", 2)),
+            epochs=int(gc.get("epochs", 10)),
+            lr=float(gc.get("lr", 0.005)),
+            num_negatives=int(gc.get("num_negatives", 1)),
+            batch_size=int(gc.get("batch_size", 1024)),
+            seed=int(gc.get("seed", 42)),
+            device=str(gc.get("device", "auto")),
+            cache_dir=af_dir / "title_desc_embeddings",
+            review_features_dir=af_dir,
+            validation_fraction=float(gc.get("validation_fraction", 0.1)),
             progress=progress,
         )
     return models
@@ -472,7 +491,7 @@ def main(argv=None):
         graph_devices = {
             name: str(getattr(model, "device", "n/a"))
             for name, model in models.items()
-            if name in {"lightgcn", "graphsage"}
+            if name in {"lightgcn", "graphsage", "graphsage_bpr"}
         }
         print(f"[{args.dataset}] graph model devices: {graph_devices}", flush=True)
 

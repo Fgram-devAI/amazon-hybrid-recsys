@@ -113,7 +113,11 @@ def test_evaluate_models_can_cap_rating_rows():
 
 def test_evaluate_models_checkpoints_graph_models(tmp_path):
     evaluate_models(
-        {"lightgcn": FixedScore(), "graphsage": FixedScore()},
+        {
+            "lightgcn": FixedScore(),
+            "graphsage": FixedScore(),
+            "graphsage_bpr": FixedScore(),
+        },
         TRAIN,
         TEST,
         META,
@@ -126,11 +130,16 @@ def test_evaluate_models_checkpoints_graph_models(tmp_path):
 
     assert (tmp_path / "lightgcn.pt").read_text() == "checkpoint"
     assert (tmp_path / "graphsage.pt").read_text() == "checkpoint"
+    assert (tmp_path / "graphsage_bpr.pt").read_text() == "checkpoint"
 
 
 def test_evaluate_models_can_tag_graph_checkpoints(tmp_path):
     evaluate_models(
-        {"lightgcn": FixedScore(), "graphsage": FixedScore()},
+        {
+            "lightgcn": FixedScore(),
+            "graphsage": FixedScore(),
+            "graphsage_bpr": FixedScore(),
+        },
         TRAIN,
         TEST,
         META,
@@ -144,8 +153,10 @@ def test_evaluate_models_can_tag_graph_checkpoints(tmp_path):
 
     assert (tmp_path / "lightgcn_20ep.pt").read_text() == "checkpoint"
     assert (tmp_path / "graphsage_20ep.pt").read_text() == "checkpoint"
+    assert (tmp_path / "graphsage_bpr_20ep.pt").read_text() == "checkpoint"
     assert not (tmp_path / "lightgcn.pt").exists()
     assert not (tmp_path / "graphsage.pt").exists()
+    assert not (tmp_path / "graphsage_bpr.pt").exists()
 
 
 def test_evaluate_models_train_only_skips_metrics_and_returns_checkpoints(tmp_path):

@@ -101,7 +101,7 @@ def test_build_models_without_ablation_omits_ablation_variants():
     assert "content_enriched" in models
 
 
-def test_build_models_with_graph_flag_registers_lightgcn_and_graphsage():
+def test_build_models_with_graph_flag_registers_graph_models():
     from src.evaluation.evaluate import build_models
 
     config = {
@@ -129,6 +129,7 @@ def test_build_models_with_graph_flag_registers_lightgcn_and_graphsage():
     )
     assert "lightgcn" in models
     assert "graphsage" in models
+    assert "graphsage_bpr" in models
 
 
 def test_build_models_graph_only_registers_only_graph_models():
@@ -141,7 +142,7 @@ def test_build_models_graph_only_registers_only_graph_models():
         graph=True,
         graph_only=True,
     )
-    assert set(models) == {"lightgcn", "graphsage"}
+    assert set(models) == {"lightgcn", "graphsage", "graphsage_bpr"}
 
 
 def test_build_models_graph_only_ignores_advanced_model_registration():
@@ -154,4 +155,4 @@ def test_build_models_graph_only_ignores_advanced_model_registration():
         graph=True,
         graph_only=True,
     )
-    assert set(models) == {"lightgcn", "graphsage"}
+    assert set(models) == {"lightgcn", "graphsage", "graphsage_bpr"}
