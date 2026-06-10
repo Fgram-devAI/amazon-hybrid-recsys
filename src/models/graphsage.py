@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv
+from tqdm import tqdm
 
 from src.features.node_features import (
     build_item_node_features,
@@ -185,7 +186,15 @@ class GraphSAGERecommender(GraphRecommender):
             perm = torch.randperm(edge_label_index.shape[1])
             epoch_loss = 0.0
             n_batches = int(np.ceil(perm.shape[0] / self.batch_size))
-            for start in range(0, perm.shape[0], self.batch_size):
+            batch_starts = range(0, perm.shape[0], self.batch_size)
+            for start in tqdm(
+                batch_starts,
+                total=n_batches,
+                desc=f"[graphsage] epoch {epoch + 1}/{self.epochs}",
+                unit="batch",
+                disable=not self.progress,
+                leave=False,
+            ):
                 idx = perm[start:start + self.batch_size]
                 batch_edges = edge_label_index[:, idx]
                 batch_y = edge_label_rating[idx]

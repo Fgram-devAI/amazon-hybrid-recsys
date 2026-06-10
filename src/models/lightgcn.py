@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn.models import LightGCN
+from tqdm import tqdm
 
 from src.evaluation.tune import split_validation
 from src.graph.build import BipartiteGraph, build_graph
@@ -142,7 +143,15 @@ class LightGCNRecommender(GraphRecommender):
             optimizer.zero_grad()
             n_batches = int(np.ceil(perm.shape[0] / self.batch_size))
             epoch_loss = 0.0
-            for start in range(0, perm.shape[0], self.batch_size):
+            batch_starts = range(0, perm.shape[0], self.batch_size)
+            for batch_idx, start in enumerate(tqdm(
+                batch_starts,
+                total=n_batches,
+                desc=f"[lightgcn] epoch {epoch + 1}/{self.epochs}",
+                unit="batch",
+                disable=not self.progress,
+                leave=False,
+            )):
                 idx = perm[start:start + self.batch_size]
                 u = pos_edges[0, idx]
                 pos_i = pos_edges[1, idx]
@@ -160,7 +169,7 @@ class LightGCNRecommender(GraphRecommender):
                 neg_score = (u_emb.unsqueeze(1) * neg_emb).sum(dim=-1)
                 loss = F.softplus(neg_score - pos_score).mean()
                 epoch_loss += float(loss.detach().cpu())
-                is_last = (start // self.batch_size) == n_batches - 1
+                is_last = batch_idx == n_batches - 1
                 loss.backward(retain_graph=not is_last)
             optimizer.step()
             if self.progress:
