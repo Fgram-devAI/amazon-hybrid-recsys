@@ -54,29 +54,33 @@ def sample_negatives(all_items, exclude, n, rng):
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
                     max_test_rows=None, progress=False, checkpoint_dir=None,
-                    metrics_path=None, checkpoint_tag=None):
+                    metrics_path=None, checkpoint_tag=None, train_only=False):
     """Fit each model and return a metrics DataFrame (one row per model)."""
     rating_test = test
-    if max_test_rows is not None and len(test) > max_test_rows:
-        rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
+    relevant = {}
+    all_items = np.asarray([], dtype=object)
+    user_train_items = {}
+    if not train_only:
+        if max_test_rows is not None and len(test) > max_test_rows:
+            rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
 
-    relevant = relevant_items_by_user(test, min_rating_relevant)
-    if max_eval_users is not None and len(relevant) > max_eval_users:
-        rng = np.random.default_rng(seed)
-        users = list(relevant)
-        chosen = rng.choice(len(users), size=max_eval_users, replace=False)
-        relevant = {users[int(idx)]: relevant[users[int(idx)]] for idx in chosen}
-    if progress:
-        print(
-            f"[{dataset}] ranking users: {len(relevant)} "
-            f"(cap={max_eval_users}, negatives/user={num_negatives})",
-            flush=True,
-        )
+        relevant = relevant_items_by_user(test, min_rating_relevant)
+        if max_eval_users is not None and len(relevant) > max_eval_users:
+            rng = np.random.default_rng(seed)
+            users = list(relevant)
+            chosen = rng.choice(len(users), size=max_eval_users, replace=False)
+            relevant = {users[int(idx)]: relevant[users[int(idx)]] for idx in chosen}
+        if progress:
+            print(
+                f"[{dataset}] ranking users: {len(relevant)} "
+                f"(cap={max_eval_users}, negatives/user={num_negatives})",
+                flush=True,
+            )
 
-    all_items = np.asarray(pd.unique(train["parent_asin"]), dtype=object)
-    user_train_items = {
-        user: set(items) for user, items in train.groupby("user_id")["parent_asin"]
-    }
+        all_items = np.asarray(pd.unique(train["parent_asin"]), dtype=object)
+        user_train_items = {
+            user: set(items) for user, items in train.groupby("user_id")["parent_asin"]
+        }
 
     rows = []
     for name, model in models.items():
@@ -86,12 +90,21 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         model.fit(train, metadata)
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
+        checkpoint_path = None
         if checkpoint_dir is not None and name in {"lightgcn", "graphsage"}:
             suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
             path = Path(checkpoint_dir) / f"{name}{suffix}.pt"
             model.save_checkpoint(path)
+            checkpoint_path = str(path)
             if progress:
                 print(f"[{dataset}] checkpointed {name} -> {path}", flush=True)
+        if train_only:
+            rows.append({
+                "dataset": dataset,
+                "model": name,
+                "checkpoint_path": checkpoint_path,
+            })
+            continue
 
         if progress:
             print(f"[{dataset}] predicting ratings for {name} on {len(rating_test):,} rows ...", flush=True)
@@ -342,6 +355,18 @@ def main(argv=None):
         "--checkpoint-tag",
         help="append a tag to graph checkpoint filenames, e.g. 20ep -> lightgcn_20ep.pt",
     )
+    parser.add_argument(
+        "--only-model",
+        help="fit/evaluate only one registered model, e.g. lightgcn",
+    )
+    parser.add_argument(
+        "--train-only", action="store_true",
+        help="fit selected model(s), save graph checkpoints, and skip metric evaluation",
+    )
+    parser.add_argument(
+        "--graph-epochs", type=int,
+        help="override graph.epochs for this run, e.g. 20",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -360,8 +385,14 @@ def main(argv=None):
         parser.error("--graph-only cannot be combined with --tune-alpha")
     if args.checkpoint_tag and not args.graph:
         parser.error("--checkpoint-tag requires --graph or --graph-only")
+    if args.train_only and not args.graph:
+        parser.error("--train-only requires --graph or --graph-only")
+    if args.graph_epochs is not None and not args.graph:
+        parser.error("--graph-epochs requires --graph or --graph-only")
 
     config = load_config(args.config)
+    if args.graph_epochs is not None:
+        config.setdefault("graph", {})["epochs"] = args.graph_epochs
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
     if not args.quiet:
         print(
@@ -423,6 +454,12 @@ def main(argv=None):
         graph=args.graph,
         graph_only=args.graph_only,
     )
+    if args.only_model:
+        if args.only_model not in models:
+            parser.error(
+                f"--only-model must be one of: {', '.join(sorted(models))}"
+            )
+        models = {args.only_model: models[args.only_model]}
     if args.graph and not args.quiet:
         graph_devices = {
             name: str(getattr(model, "device", "n/a"))
@@ -452,13 +489,16 @@ def main(argv=None):
         if args.graph else None,
         metrics_path=metrics_path,
         checkpoint_tag=args.checkpoint_tag,
+        train_only=args.train_only,
     )
 
-    metrics_path.write_text(table.to_json(orient="records", indent=2))
-    if not args.quiet:
-        print(f"[{args.dataset}] wrote final metrics.json", flush=True)
+    if not args.train_only:
+        metrics_path.write_text(table.to_json(orient="records", indent=2))
+        if not args.quiet:
+            print(f"[{args.dataset}] wrote final metrics.json", flush=True)
     print(table.to_string(index=False))
-    print(f"\nMetrics -> {metrics_path}")
+    if not args.train_only:
+        print(f"\nMetrics -> {metrics_path}")
 
 
 if __name__ == "__main__":

@@ -198,6 +198,21 @@ Run graph training/evaluation:
   --dataset video_games --graph-only --max-eval-users 5000
 ```
 
+Train one graph model without evaluation, preserving the baseline checkpoint:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate \
+  --dataset video_games \
+  --graph-only \
+  --only-model lightgcn \
+  --graph-epochs 20 \
+  --checkpoint-tag 20ep \
+  --train-only
+```
+
+This writes `data/processed/video_games/graph_checkpoints/lightgcn_20ep.pt`
+without overwriting the 10-epoch `lightgcn.pt` baseline.
+
 Re-evaluate stored graph checkpoints without retraining:
 
 ```bash
@@ -236,6 +251,22 @@ src/
   evaluation/  metrics and the comparison harness
   app/         Streamlit application
 tests/         pytest suite
+```
+
+Local generated outputs live under `data/processed/<dataset>/`:
+
+```
+train.parquet / test.parquet / metadata.parquet
+eda_summary.json
+embeddings/
+advanced_features/
+graph_checkpoints/
+  lightgcn.pt
+  graphsage.pt
+  lightgcn_20ep.pt        # optional tagged rerun
+metrics.json              # latest normal evaluator run
+metrics_lightgcn_checkpoint.json
+metrics_graphsage_checkpoint.json
 ```
 
 ## Setup
