@@ -82,3 +82,8 @@ def test_lightgcn_negative_sampler_honors_num_negatives_and_avoids_seen_items():
     for row, user in zip(sampled, users):
         seen_global = {item + graph.item_offset for item in positives[int(user)]}
         assert not (set(row.tolist()) & seen_global)
+
+
+def test_lightgcn_stores_weight_decay():
+    model = LightGCNRecommender(weight_decay=1e-5)
+    assert model.weight_decay == 1e-5

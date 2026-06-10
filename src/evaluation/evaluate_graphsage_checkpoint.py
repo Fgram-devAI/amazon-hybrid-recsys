@@ -152,6 +152,7 @@ def main(argv: list[str] | None = None) -> None:
         n_layers=int(gc.get("n_layers", 2)),
         epochs=int(gc.get("epochs", 10)),
         lr=float(gc.get("lr", 0.005)),
+        weight_decay=float(gc.get("weight_decay", 0.0)),
         batch_size=int(gc.get("batch_size", 1024)),
         seed=int(gc.get("seed", 42)),
         device=str(gc.get("device", "auto")),

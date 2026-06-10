@@ -93,3 +93,14 @@ def test_graphsage_predict_uses_cached_embeddings():
 
     pred = model.predict("u1", "i3")
     assert 1.0 <= pred <= 5.0
+
+
+def test_graphsage_stores_weight_decay():
+    model = GraphSAGERecommender(
+        hidden_dim=8, n_layers=2, epochs=1, lr=0.05,
+        weight_decay=1e-5, batch_size=4, seed=0, device="cpu",
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8, min_doc_freq=1,
+    )
+    assert model.weight_decay == 1e-5

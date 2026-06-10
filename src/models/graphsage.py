@@ -65,6 +65,7 @@ class GraphSAGERecommender(GraphRecommender):
         n_layers: int = 2,
         epochs: int = 20,
         lr: float = 0.005,
+        weight_decay: float = 0.0,
         batch_size: int = 1024,
         seed: int = 42,
         device: str = "auto",
@@ -81,6 +82,7 @@ class GraphSAGERecommender(GraphRecommender):
         self.n_layers = int(n_layers)
         self.epochs = int(epochs)
         self.lr = float(lr)
+        self.weight_decay = float(weight_decay)
         self.batch_size = int(batch_size)
         self.seed = int(seed)
         self.cache_dir = cache_dir
@@ -95,7 +97,11 @@ class GraphSAGERecommender(GraphRecommender):
         edge_index, edge_label_index, edge_label_rating = self._prepare_state(train, metadata)
         assert self._model is not None
         assert self._x is not None
-        optimizer = torch.optim.Adam(self._model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(
+            self._model.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
 
         self._model.train()
         for epoch in range(self.epochs):

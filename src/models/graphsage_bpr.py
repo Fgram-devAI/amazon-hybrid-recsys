@@ -32,6 +32,7 @@ class GraphSAGEBPRRecommender(GraphSAGERecommender):
         n_layers: int = 2,
         epochs: int = 20,
         lr: float = 0.005,
+        weight_decay: float = 0.0,
         num_negatives: int = 1,
         batch_size: int = 1024,
         seed: int = 42,
@@ -50,6 +51,7 @@ class GraphSAGEBPRRecommender(GraphSAGERecommender):
             n_layers=n_layers,
             epochs=epochs,
             lr=lr,
+            weight_decay=weight_decay,
             batch_size=batch_size,
             seed=seed,
             device=device,
@@ -109,7 +111,11 @@ class GraphSAGEBPRRecommender(GraphSAGERecommender):
         if pos_edges.shape[1] == 0:
             return model.eval()
 
-        optimizer = torch.optim.Adam(model.convs.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(
+            model.convs.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
         n_items = len(graph.item_index)
         item_offset = graph.item_offset
         rng = np.random.default_rng(self.seed)

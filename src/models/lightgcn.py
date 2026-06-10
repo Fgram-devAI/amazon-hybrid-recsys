@@ -27,6 +27,7 @@ class LightGCNRecommender(GraphRecommender):
         n_layers: int = 3,
         epochs: int = 20,
         lr: float = 0.001,
+        weight_decay: float = 0.0,
         num_negatives: int = 1,
         batch_size: int = 1024,
         seed: int = 42,
@@ -40,6 +41,7 @@ class LightGCNRecommender(GraphRecommender):
         self.n_layers = int(n_layers)
         self.epochs = int(epochs)
         self.lr = float(lr)
+        self.weight_decay = float(weight_decay)
         self.num_negatives = int(num_negatives)
         self.batch_size = int(batch_size)
         self.seed = int(seed)
@@ -139,7 +141,11 @@ class LightGCNRecommender(GraphRecommender):
             embedding_dim=self.embedding_dim,
             num_layers=self.n_layers,
         ).to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
 
         pos_edges = graph.positive_edge_label_index.to(self.device)
         if pos_edges.shape[1] == 0:

@@ -77,3 +77,8 @@ def test_graphsage_bpr_checkpoint_state_keeps_calibration_and_embeddings():
     assert "calibration_beta" in state
     assert "calibration_intercept" in state
     assert state["final_embeddings"] is not None
+
+
+def test_graphsage_bpr_stores_weight_decay():
+    model = _model(weight_decay=1e-5)
+    assert model.weight_decay == 1e-5

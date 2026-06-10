@@ -297,6 +297,7 @@ def build_models(
             n_layers=int(gc.get("n_layers", 2)),
             epochs=int(gc.get("epochs", 10)),
             lr=float(gc.get("lr", 0.005)),
+            weight_decay=float(gc.get("weight_decay", 0.0)),
             num_negatives=int(gc.get("num_negatives", 1)),
             batch_size=int(gc.get("batch_size", 1024)),
             seed=int(gc.get("seed", 42)),
@@ -314,6 +315,7 @@ def build_models(
             n_layers=int(gc.get("n_layers", 2)),
             epochs=int(gc.get("epochs", 10)),
             lr=float(gc.get("lr", 0.005)),
+            weight_decay=float(gc.get("weight_decay", 0.0)),
             batch_size=int(gc.get("batch_size", 1024)),
             seed=int(gc.get("seed", 42)),
             device=str(gc.get("device", "auto")),
@@ -330,6 +332,7 @@ def build_models(
             n_layers=int(gc.get("n_layers", 2)),
             epochs=int(gc.get("epochs", 10)),
             lr=float(gc.get("lr", 0.005)),
+            weight_decay=float(gc.get("weight_decay", 0.0)),
             num_negatives=int(gc.get("num_negatives", 1)),
             batch_size=int(gc.get("batch_size", 1024)),
             seed=int(gc.get("seed", 42)),
@@ -390,6 +393,10 @@ def main(argv=None):
         "--graph-num-negatives", type=int,
         help="override graph.num_negatives for this run, e.g. 4 for LightGCN BPR",
     )
+    parser.add_argument(
+        "--graph-weight-decay", type=float,
+        help="override graph.weight_decay for this run, e.g. 1e-5",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -414,12 +421,16 @@ def main(argv=None):
         parser.error("--graph-epochs requires --graph or --graph-only")
     if args.graph_num_negatives is not None and not args.graph:
         parser.error("--graph-num-negatives requires --graph or --graph-only")
+    if args.graph_weight_decay is not None and not args.graph:
+        parser.error("--graph-weight-decay requires --graph or --graph-only")
 
     config = load_config(args.config)
     if args.graph_epochs is not None:
         config.setdefault("graph", {})["epochs"] = args.graph_epochs
     if args.graph_num_negatives is not None:
         config.setdefault("graph", {})["num_negatives"] = args.graph_num_negatives
+    if args.graph_weight_decay is not None:
+        config.setdefault("graph", {})["weight_decay"] = args.graph_weight_decay
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
     if not args.quiet:
         print(

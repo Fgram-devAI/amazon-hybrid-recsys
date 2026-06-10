@@ -341,6 +341,7 @@ def test_graph_overrides_update_config(monkeypatch, tmp_path):
     def fake_build_models(config, *args, **kwargs):
         captured["epochs"] = config["graph"]["epochs"]
         captured["num_negatives"] = config["graph"]["num_negatives"]
+        captured["weight_decay"] = config["graph"]["weight_decay"]
         return {}
 
     def fake_evaluate_models(*args, **kwargs):
@@ -360,7 +361,7 @@ def test_graph_overrides_update_config(monkeypatch, tmp_path):
         "processed_dir": str(tmp_path),
         "models": {"ranking_random_seed": 42},
         "hybrid": {"alpha": 0.5},
-        "graph": {"epochs": 10, "num_negatives": 1},
+        "graph": {"epochs": 10, "num_negatives": 1, "weight_decay": 0.0},
         "evaluation": {"k": 10},
         "preprocessing": {"min_rating_relevant": 4.0},
     })
@@ -371,10 +372,12 @@ def test_graph_overrides_update_config(monkeypatch, tmp_path):
         "--graph-only",
         "--graph-epochs", "20",
         "--graph-num-negatives", "4",
+        "--graph-weight-decay", "1e-5",
         "--quiet",
     ])
     assert captured["epochs"] == 20
     assert captured["num_negatives"] == 4
+    assert captured["weight_decay"] == 1e-5
 
 
 def test_graph_only_rejects_advanced_and_tune_alpha():
@@ -405,3 +408,5 @@ def test_train_only_and_graph_overrides_require_graph():
         ev.main(["--dataset", "tiny", "--graph-epochs", "20", "--quiet"])
     with pytest.raises(SystemExit):
         ev.main(["--dataset", "tiny", "--graph-num-negatives", "4", "--quiet"])
+    with pytest.raises(SystemExit):
+        ev.main(["--dataset", "tiny", "--graph-weight-decay", "1e-5", "--quiet"])

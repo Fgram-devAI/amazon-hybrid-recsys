@@ -240,6 +240,21 @@ Then evaluate the tagged checkpoint:
   --output data/processed/video_games/metrics_lightgcn_40ep_neg4_full.json
 ```
 
+If `40ep_neg4` improves train BPR loss but flattens or hurts held-out F1@10,
+rerun with light L2 regularization before adding more epochs:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate \
+  --dataset video_games \
+  --graph-only \
+  --only-model lightgcn \
+  --graph-epochs 40 \
+  --graph-num-negatives 4 \
+  --graph-weight-decay 1e-5 \
+  --checkpoint-tag 40ep_neg4_wd1e-5 \
+  --train-only
+```
+
 Train GraphSAGE-BPR without overwriting regression GraphSAGE:
 
 ```bash
@@ -325,6 +340,7 @@ graph_checkpoints/
   graphsage_bpr.pt
   lightgcn_20ep.pt        # optional tagged rerun
   lightgcn_40ep_neg4.pt   # optional BPR negative-sampling rerun
+  lightgcn_40ep_neg4_wd1e-5.pt
 metrics.json              # latest normal evaluator run
 metrics_lightgcn_checkpoint.json
 metrics_graphsage_checkpoint.json
