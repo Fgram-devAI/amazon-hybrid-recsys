@@ -128,6 +128,26 @@ def test_evaluate_models_checkpoints_graph_models(tmp_path):
     assert (tmp_path / "graphsage.pt").read_text() == "checkpoint"
 
 
+def test_evaluate_models_can_tag_graph_checkpoints(tmp_path):
+    evaluate_models(
+        {"lightgcn": FixedScore(), "graphsage": FixedScore()},
+        TRAIN,
+        TEST,
+        META,
+        k=2,
+        min_rating_relevant=4.0,
+        num_negatives=2,
+        seed=42,
+        checkpoint_dir=tmp_path,
+        checkpoint_tag="20ep",
+    )
+
+    assert (tmp_path / "lightgcn_20ep.pt").read_text() == "checkpoint"
+    assert (tmp_path / "graphsage_20ep.pt").read_text() == "checkpoint"
+    assert not (tmp_path / "lightgcn.pt").exists()
+    assert not (tmp_path / "graphsage.pt").exists()
+
+
 def test_build_models_shares_hybrid_component_instances():
     from src.evaluation.evaluate import build_models
     from src.models.embedding import FakeEmbedder
@@ -241,3 +261,11 @@ def test_graph_only_rejects_advanced_and_tune_alpha():
         ev.main(["--dataset", "tiny", "--graph-only", "--advanced", "--quiet"])
     with pytest.raises(SystemExit):
         ev.main(["--dataset", "tiny", "--graph-only", "--tune-alpha", "--quiet"])
+
+
+def test_checkpoint_tag_requires_graph():
+    import pytest
+    from src.evaluation import evaluate as ev
+
+    with pytest.raises(SystemExit):
+        ev.main(["--dataset", "tiny", "--checkpoint-tag", "20ep", "--quiet"])

@@ -54,7 +54,7 @@ def sample_negatives(all_items, exclude, n, rng):
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
                     max_test_rows=None, progress=False, checkpoint_dir=None,
-                    metrics_path=None):
+                    metrics_path=None, checkpoint_tag=None):
     """Fit each model and return a metrics DataFrame (one row per model)."""
     rating_test = test
     if max_test_rows is not None and len(test) > max_test_rows:
@@ -87,7 +87,8 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
         if checkpoint_dir is not None and name in {"lightgcn", "graphsage"}:
-            path = Path(checkpoint_dir) / f"{name}.pt"
+            suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
+            path = Path(checkpoint_dir) / f"{name}{suffix}.pt"
             model.save_checkpoint(path)
             if progress:
                 print(f"[{dataset}] checkpointed {name} -> {path}", flush=True)
@@ -337,6 +338,10 @@ def main(argv=None):
         "--graph-only", action="store_true",
         help="evaluate only lightgcn + graphsage; implies --graph and skips baseline/advanced models",
     )
+    parser.add_argument(
+        "--checkpoint-tag",
+        help="append a tag to graph checkpoint filenames, e.g. 20ep -> lightgcn_20ep.pt",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -353,6 +358,8 @@ def main(argv=None):
         parser.error("--graph-only cannot be combined with --advanced")
     if args.graph_only and args.tune_alpha:
         parser.error("--graph-only cannot be combined with --tune-alpha")
+    if args.checkpoint_tag and not args.graph:
+        parser.error("--checkpoint-tag requires --graph or --graph-only")
 
     config = load_config(args.config)
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
@@ -444,6 +451,7 @@ def main(argv=None):
         checkpoint_dir=Path(config["processed_dir"]) / args.dataset / "graph_checkpoints"
         if args.graph else None,
         metrics_path=metrics_path,
+        checkpoint_tag=args.checkpoint_tag,
     )
 
     metrics_path.write_text(table.to_json(orient="records", indent=2))
