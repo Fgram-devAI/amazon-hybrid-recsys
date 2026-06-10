@@ -231,7 +231,9 @@ def build_models(
             # train-only sentiment/user/item aggregates (consumed if the offline job ran)
             review_features_dir=af_dir,
         )
-        if include_ablation:
+        if not include_ablation:
+            models["content_enriched"] = content_enriched
+        else:
             # Ablation mode: register explicit names only. Omit the legacy
             # `content_enriched` row so the same sentiment-aware model is not
             # fitted/scored twice in the same evaluation table.
@@ -246,8 +248,6 @@ def build_models(
                 use_item_sentiment=False,
                 use_user_offset=False,
             )
-        else:
-            models["content_enriched"] = content_enriched
         models["calibrated_hybrid"] = CalibratedHybrid(
             svd,
             content_enriched,
