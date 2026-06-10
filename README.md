@@ -162,22 +162,24 @@ random and popularity rows before judging their absolute scale.
 
 ### Graph checkpoint eval (`video_games`)
 
-Checkpoint-based graph evaluation on the primary benchmark. LightGCN rows below
-use the full held-out split (`79,248` ranking users); GraphSAGE is the larger
-checkpoint feasibility run capped to `5,000` ranking users and `50,000` rating rows.
+Checkpoint-based graph evaluation on the primary benchmark using the full held-out
+split (`79,248` ranking users).
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
 |---|---:|---:|---:|---:|---:|
 | LightGCN 10ep / neg1 | 1.2472 | **0.9556** | 0.0880 | 0.5755 | 0.1454 |
 | LightGCN 20ep / neg1 | 1.2459 | 0.9589 | 0.0882 | 0.5782 | 0.1458 |
-| LightGCN 40ep / neg4 | 1.2433 | 0.9598 | **0.0901** | **0.5923** | **0.1491** |
-| GraphSAGE checkpoint | **1.1560** | **0.7626** | 0.0219 | 0.1390 | 0.0357 |
+| LightGCN 40ep / neg4 | 1.2433 | 0.9598 | 0.0901 | 0.5923 | 0.1491 |
+| LightGCN 40ep / neg4 / wd1e-5 | 1.2433 | 0.9598 | **0.0902** | **0.5928** | **0.1492** |
+| GraphSAGE MSE 10ep | **1.1613** | **0.7640** | 0.0235 | 0.1488 | 0.0380 |
+| GraphSAGE-BPR 20ep / neg4 | 1.2559 | 0.9814 | 0.0550 | 0.3573 | 0.0906 |
 
 LightGCN is the stronger ranking model, which matches its BPR top-K objective.
 Increasing epochs alone (`10 -> 20`) was almost flat, but increasing BPR negative
-sampling (`40ep / neg4`) gave a modest, consistent ranking lift. GraphSAGE is
-stronger on RMSE/MAE but weak on sampled ranking, which is plausible because it
-is trained as rating edge regression.
+sampling (`40ep / neg4`) gave a modest, consistent ranking lift; light weight decay
+nudged it slightly further. GraphSAGE with MSE remains the better graph rating
+predictor, while GraphSAGE-BPR substantially improves GraphSAGE ranking but still
+trails LightGCN.
 
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
@@ -244,9 +246,9 @@ Then evaluate the tagged checkpoint:
   --output data/processed/video_games/metrics_lightgcn_40ep_neg4_full.json
 ```
 
-`40ep_neg4` improved held-out F1@10 modestly (`0.1454 -> 0.1491`). If a later
-longer run flattens or hurts ranking, rerun with light L2 regularization before
-adding more epochs:
+`40ep_neg4` improved held-out F1@10 modestly (`0.1454 -> 0.1491`), and light
+L2 regularization nudged it to `0.1492`. If a later longer run flattens or hurts
+ranking, prefer regularization/negative-sampling checks before adding more epochs:
 
 ```bash
 ./.venv/bin/python -m src.evaluation.evaluate \
