@@ -160,18 +160,18 @@ Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking user
 The P/R/F1 values are sampled-candidate metrics — compare them against the
 random and popularity rows before judging their absolute scale.
 
-### Graph smoke (`video_games`, checkpoint eval)
+### Graph checkpoint eval (`video_games`)
 
 Checkpoint-based graph evaluation on the primary benchmark, capped to 5,000
-rating rows and 500 ranking users. These rows are a feasibility/sanity check,
+ranking users and 50,000 rating rows. These rows are a larger feasibility check,
 not the final full graph benchmark.
 
 | Model | RMSE | MAE | P@10 | R@10 | F1@10 |
 |---|---:|---:|---:|---:|---:|
-| LightGCN checkpoint | 1.2359 | 0.9482 | **0.0842** | **0.5673** | **0.1404** |
-| GraphSAGE checkpoint | **1.1615** | **0.7664** | 0.0234 | 0.1637 | 0.0394 |
+| LightGCN checkpoint | 1.2451 | 0.9544 | **0.0875** | **0.5723** | **0.1447** |
+| GraphSAGE checkpoint | **1.1560** | **0.7626** | 0.0219 | 0.1390 | 0.0357 |
 
-LightGCN is the stronger ranking model in this smoke run, which matches its BPR
+LightGCN is the stronger ranking model in this checkpoint run, which matches its BPR
 top-K objective. GraphSAGE is stronger on RMSE/MAE but weak on sampled ranking,
 which is plausible because it is trained as rating edge regression.
 
@@ -202,11 +202,15 @@ Re-evaluate stored graph checkpoints without retraining:
 
 ```bash
 ./.venv/bin/python -m src.evaluation.evaluate_lightgcn_checkpoint \
-  --dataset video_games --max-eval-users 500 --max-test-rows 5000
+  --dataset video_games --max-eval-users 5000 --max-test-rows 50000
 
 ./.venv/bin/python -m src.evaluation.evaluate_graphsage_checkpoint \
-  --dataset video_games --max-eval-users 500 --max-test-rows 5000
+  --dataset video_games --max-eval-users 5000 --max-test-rows 50000
 ```
+
+When comparing longer graph training runs, save checkpoints under distinct names
+such as `lightgcn_10ep.pt` and `lightgcn_20ep.pt` so the 10-epoch baseline remains
+re-evaluable.
 
 Dependencies installed once via `pip install -r requirements.txt` (heavy: torch
 pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. Graph
@@ -249,7 +253,7 @@ pip install -r requirements.txt
 🚧 Phase 3 (`feat/graph-recommender`): LightGCN and GraphSAGE are implemented over the train-only bipartite graph, with checkpoint evaluators for long graph runs. **Leakage rule:** held-out test edges never enter message passing or node-feature aggregates. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
 
 - Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
-- A first sampled `movies_and_tv` run and capped graph smoke are in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
+- A first sampled `movies_and_tv` run and capped graph checkpoint eval are in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
 - Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
 
 Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.
