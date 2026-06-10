@@ -14,8 +14,8 @@ Two recommendation paradigms, each with a known weakness:
 The **hybrid** fuses both so each covers the other's weakness. The project is planned in staged modeling/infrastructure phases:
 
 1. **Weighted hybrid** — `score = α · CF + (1 − α) · content`, implemented in Phase 1.
-2. **Advanced content/review-feedback models** — planned next: filtered category features, review-text sentiment, user strictness/generosity features, and stronger sanity baselines.
-3. **Graph recommenders** — planned after that: LightGCN and GraphSAGE over the user-item graph, with item/user features where appropriate.
+2. **Advanced content/review-feedback models** — filtered category features, review-text sentiment, user strictness/generosity features, and stronger sanity baselines.
+3. **Graph recommenders** — LightGCN and GraphSAGE over the user-item graph, with item/user features where appropriate.
 4. **Retrieval/reasoning infrastructure** — Milvus + Neo4j + an LLM reasoning layer as the final extension, not the primary evaluated recommender.
 
 ## Datasets
@@ -53,8 +53,8 @@ Raw and processed data are reproducible local artifacts and are not committed.
 | Item-KNN CF | ratings matrix |
 | SVD CF (matrix factorization) | ratings matrix |
 | Weighted hybrid | both (blended at output) |
-| Enriched content/review models | item metadata + train-only review feedback (planned) |
-| LightGCN / GraphSAGE | graph structure, optionally node features (planned) |
+| Enriched content/review models | item metadata + train-only review feedback |
+| LightGCN / GraphSAGE | train-only user-item graph, optionally node features |
 
 All models share one interface — `fit`, `predict(user, item)`, `recommend(user, K)` — so the evaluation harness and app treat them identically.
 
@@ -160,6 +160,21 @@ Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking user
 The P/R/F1 values are sampled-candidate metrics — compare them against the
 random and popularity rows before judging their absolute scale.
 
+### Graph smoke (`video_games`, checkpoint eval)
+
+Checkpoint-based graph evaluation on the primary benchmark, capped to 5,000
+rating rows and 500 ranking users. These rows are a feasibility/sanity check,
+not the final full graph benchmark.
+
+| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
+|---|---:|---:|---:|---:|---:|
+| LightGCN checkpoint | 1.2359 | 0.9482 | **0.0842** | **0.5673** | **0.1404** |
+| GraphSAGE checkpoint | **1.1615** | **0.7664** | 0.0234 | 0.1637 | 0.0394 |
+
+LightGCN is the stronger ranking model in this smoke run, which matches its BPR
+top-K objective. GraphSAGE is stronger on RMSE/MAE but weak on sampled ranking,
+which is plausible because it is trained as rating edge regression.
+
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
 ## Graph Recommender Models (LightGCN + GraphSAGE)
@@ -176,17 +191,33 @@ are never part of the message-passing graph):
   item-sentiment); user nodes carry train-only behavioural aggregates. Trained
   as edge regression on observed train ratings (the rating is never an input feature).
 
-Run: `./.venv/bin/python -m src.evaluation.evaluate --dataset video_games --no-knn --graph [--max-eval-users 5000]`
+Run graph training/evaluation:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate \
+  --dataset video_games --graph-only --max-eval-users 5000
+```
+
+Re-evaluate stored graph checkpoints without retraining:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate_lightgcn_checkpoint \
+  --dataset video_games --max-eval-users 500 --max-test-rows 5000
+
+./.venv/bin/python -m src.evaluation.evaluate_graphsage_checkpoint \
+  --dataset video_games --max-eval-users 500 --max-test-rows 5000
+```
 
 Dependencies installed once via `pip install -r requirements.txt` (heavy: torch
-pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. On
-darwin arm64 the graph models run on CPU by default; MPS is opportunistic.
+pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. Graph
+device selection follows `cuda -> mps -> cpu`; MPS is opportunistic on Apple
+Silicon because PyG operator coverage can vary.
 
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
 - **Phase 2 (`feat/advanced-models`)** — richer content/review-feedback models: filtered categories, train-only review sentiment, user strictness/generosity features, popularity/random baselines, and hybrid calibration.
-- **Phase 3 (`feat/graph-recommender`)** — LightGCN and GraphSAGE plus graph EDA/community analysis.
+- **Phase 3 (`feat/graph-recommender`)** — LightGCN and GraphSAGE graph recommenders; graph EDA/community analysis follows separately.
 - **Phase 4 (`feat/streamlit-app`)** — visual app layer over metrics, EDA, users, items, and recommendations.
 - **Phase 5 (`feat/storage-vector-graph-dbs`)** — Milvus vector search and Neo4j graph storage.
 - **Phase 6 (`feat/llm-recommender-system`)** — LLM-guided explanation/reasoning over model outputs, vector search, and graph queries.
@@ -215,10 +246,10 @@ pip install -r requirements.txt
 
 ## Status
 
-🚧 Phase 2 (`feat/advanced-models`): filtered category features, **train-only** review-text sentiment + user/item aggregates (consumed by the enriched content model), random + popularity baselines, and validation-slice α tuning. **Leakage rule:** held-out test review text never feeds the prediction for the same test interaction. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
+🚧 Phase 3 (`feat/graph-recommender`): LightGCN and GraphSAGE are implemented over the train-only bipartite graph, with checkpoint evaluators for long graph runs. **Leakage rule:** held-out test edges never enter message passing or node-feature aggregates. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
 
 - Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
-- A first sampled `movies_and_tv` run is in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
-- **LightGCN/GraphSAGE**, Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
+- A first sampled `movies_and_tv` run and capped graph smoke are in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
+- Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
 
 Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.
