@@ -354,11 +354,12 @@ def main(argv=None):
     embedder = build_embedder(config)
     if not args.quiet:
         print(f"[{args.dataset}] embedder device: {embedder.device}", flush=True)
-        print(
-            f"[{args.dataset}] collaborative filtering device: cpu "
-            "(scikit-surprise SVD/KNN)",
-            flush=True,
-        )
+        if not args.graph_only:
+            print(
+                f"[{args.dataset}] collaborative filtering device: cpu "
+                "(scikit-surprise SVD/KNN)",
+                flush=True,
+            )
 
     chosen_alpha = args.alpha
     if args.tune_alpha:
@@ -402,6 +403,13 @@ def main(argv=None):
         graph=args.graph,
         graph_only=args.graph_only,
     )
+    if args.graph and not args.quiet:
+        graph_devices = {
+            name: str(getattr(model, "device", "n/a"))
+            for name, model in models.items()
+            if name in {"lightgcn", "graphsage"}
+        }
+        print(f"[{args.dataset}] graph model devices: {graph_devices}", flush=True)
 
     table = evaluate_models(
         models,
