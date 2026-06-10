@@ -53,21 +53,9 @@ def sample_negatives(all_items, exclude, n, rng):
 
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
-                    max_test_rows=None, progress=False, checkpoint_dir=None):
+                    max_test_rows=None, progress=False, checkpoint_dir=None,
+                    metrics_path=None):
     """Fit each model and return a metrics DataFrame (one row per model)."""
-    for name, model in models.items():
-        fit_start = perf_counter()
-        if progress:
-            print(f"[{dataset}] fitting {name} ...", flush=True)
-        model.fit(train, metadata)
-        if progress:
-            print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
-        if checkpoint_dir is not None and name in {"lightgcn", "graphsage"}:
-            path = Path(checkpoint_dir) / f"{name}.pt"
-            model.save_checkpoint(path)
-            if progress:
-                print(f"[{dataset}] checkpointed {name} -> {path}", flush=True)
-
     rating_test = test
     if max_test_rows is not None and len(test) > max_test_rows:
         rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
@@ -92,6 +80,18 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
 
     rows = []
     for name, model in models.items():
+        fit_start = perf_counter()
+        if progress:
+            print(f"[{dataset}] fitting {name} ...", flush=True)
+        model.fit(train, metadata)
+        if progress:
+            print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
+        if checkpoint_dir is not None and name in {"lightgcn", "graphsage"}:
+            path = Path(checkpoint_dir) / f"{name}.pt"
+            model.save_checkpoint(path)
+            if progress:
+                print(f"[{dataset}] checkpointed {name} -> {path}", flush=True)
+
         if progress:
             print(f"[{dataset}] predicting ratings for {name} on {len(rating_test):,} rows ...", flush=True)
         rating_start = perf_counter()
@@ -160,6 +160,12 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                 "max_test_rows": max_test_rows,
             }
         )
+        if metrics_path is not None:
+            path = Path(metrics_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(pd.DataFrame(rows).to_json(orient="records", indent=2))
+            if progress:
+                print(f"[{dataset}] wrote partial metrics -> {path}", flush=True)
     return pd.DataFrame(rows)
 
 
@@ -418,6 +424,10 @@ def main(argv=None):
         }
         print(f"[{args.dataset}] graph model devices: {graph_devices}", flush=True)
 
+    out_dir = Path(config["processed_dir"]) / args.dataset
+    out_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = out_dir / "metrics.json"
+
     table = evaluate_models(
         models,
         train,
@@ -433,15 +443,14 @@ def main(argv=None):
         progress=not args.quiet,
         checkpoint_dir=Path(config["processed_dir"]) / args.dataset / "graph_checkpoints"
         if args.graph else None,
+        metrics_path=metrics_path,
     )
 
-    out_dir = Path(config["processed_dir"]) / args.dataset
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "metrics.json").write_text(table.to_json(orient="records", indent=2))
+    metrics_path.write_text(table.to_json(orient="records", indent=2))
     if not args.quiet:
-        print(f"[{args.dataset}] wrote metrics.json", flush=True)
+        print(f"[{args.dataset}] wrote final metrics.json", flush=True)
     print(table.to_string(index=False))
-    print(f"\nMetrics -> {out_dir / 'metrics.json'}")
+    print(f"\nMetrics -> {metrics_path}")
 
 
 if __name__ == "__main__":
