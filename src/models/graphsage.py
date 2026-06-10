@@ -89,6 +89,7 @@ class GraphSAGERecommender(GraphRecommender):
         self._graph: BipartiteGraph | None = None
         self._model: _SAGEEdgeModel | None = None
         self._x: torch.Tensor | None = None
+        self._final_embeddings: torch.Tensor | None = None
 
     def fit(self, train: pd.DataFrame, metadata: object = None) -> "GraphSAGERecommender":
         if metadata is None:
@@ -212,29 +213,39 @@ class GraphSAGERecommender(GraphRecommender):
                     flush=True,
                 )
         self._model.eval()
+        with torch.no_grad():
+            self._final_embeddings = self._model.encode(self._x, edge_index).detach()
+        if self.progress:
+            print(
+                f"[graphsage] cached final embeddings: "
+                f"shape={tuple(self._final_embeddings.shape)}",
+                flush=True,
+            )
         return self
 
     def predict(self, user_id: str, parent_asin: str) -> float:
-        if self._model is None or self._graph is None or self._x is None:
+        if self._model is None or self._graph is None or self._final_embeddings is None:
             return self._clip(self._fallback(user_id, parent_asin))
         uid = self._graph.user_index.get(user_id)
         iid = self._graph.item_index.get(parent_asin)
         if uid is None or iid is None:
             return self._clip(self._fallback(user_id, parent_asin))
-        edge_index = self._graph.propagation_edge_index.to(self.device)
         edge_label = torch.tensor(
             [[uid], [iid + self._graph.item_offset]],
             dtype=torch.long, device=self.device,
         )
         with torch.no_grad():
-            h = self._model.encode(self._x, edge_index)
-            pred = self._model.predict_edge(h, edge_label).item()
+            pred = self._model.predict_edge(self._final_embeddings, edge_label).item()
         return self._clip(pred)
 
     def state_dict(self) -> dict[str, object]:
         assert self._model is not None
-        return {"model": self._model.state_dict()}
+        return {
+            "model": self._model.state_dict(),
+            "final_embeddings": self._final_embeddings,
+        }
 
     def load_state_dict(self, state: dict[str, object]) -> None:
         assert self._model is not None
         self._model.load_state_dict(state["model"])  # type: ignore[arg-type]
+        self._final_embeddings = state.get("final_embeddings")  # type: ignore[assignment]

@@ -74,3 +74,22 @@ def test_graphsage_predict_falls_back_for_unseen_user_and_item():
 
     pred = model.predict("ghost", "ghost")
     assert 1.0 <= pred <= 5.0
+
+
+def test_graphsage_predict_uses_cached_embeddings():
+    model = GraphSAGERecommender(
+        hidden_dim=8, n_layers=2, epochs=1, lr=0.05,
+        batch_size=4, seed=0, device="cpu",
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8, min_doc_freq=1,
+    ).fit(_toy_train(), _toy_metadata())
+
+    def _raise_if_reencoded(*args, **kwargs):
+        raise AssertionError("predict() should reuse cached node embeddings")
+
+    assert model._model is not None
+    model._model.encode = _raise_if_reencoded
+
+    pred = model.predict("u1", "i3")
+    assert 1.0 <= pred <= 5.0
