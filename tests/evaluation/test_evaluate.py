@@ -30,6 +30,9 @@ class FixedScore(Recommender):
     def predict(self, user_id, parent_asin):
         return 5.0  # ranks everything equally; smoke-tests the harness
 
+    def save_checkpoint(self, path):
+        path.write_text("checkpoint")
+
 
 def test_sample_negatives_is_reproducible_and_excludes_exclude_set():
     import numpy as np
@@ -106,6 +109,23 @@ def test_evaluate_models_can_cap_rating_rows():
     )
 
     assert table["max_test_rows"].iloc[0] == 2
+
+
+def test_evaluate_models_checkpoints_graph_models(tmp_path):
+    evaluate_models(
+        {"lightgcn": FixedScore(), "graphsage": FixedScore()},
+        TRAIN,
+        TEST,
+        META,
+        k=2,
+        min_rating_relevant=4.0,
+        num_negatives=2,
+        seed=42,
+        checkpoint_dir=tmp_path,
+    )
+
+    assert (tmp_path / "lightgcn.pt").read_text() == "checkpoint"
+    assert (tmp_path / "graphsage.pt").read_text() == "checkpoint"
 
 
 def test_build_models_shares_hybrid_component_instances():

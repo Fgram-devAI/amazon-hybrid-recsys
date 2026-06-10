@@ -69,6 +69,7 @@ class GraphSAGERecommender(GraphRecommender):
         device: str = "auto",
         cache_dir: object = None,
         review_features_dir: object = None,
+        progress: bool = False,
     ) -> None:
         super().__init__(device=device)
         self.embedder = embedder
@@ -83,6 +84,7 @@ class GraphSAGERecommender(GraphRecommender):
         self.seed = int(seed)
         self.cache_dir = cache_dir
         self.review_features_dir = review_features_dir
+        self.progress = bool(progress)
         self._graph: BipartiteGraph | None = None
         self._model: _SAGEEdgeModel | None = None
         self._x: torch.Tensor | None = None
@@ -93,13 +95,32 @@ class GraphSAGERecommender(GraphRecommender):
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         self._fit_means(train)
+        if self.progress:
+            print(
+                f"[graphsage] fit start: rows={len(train):,}, device={self.device}, "
+                f"epochs={self.epochs}, hidden_dim={self.hidden_dim}, layers={self.n_layers}",
+                flush=True,
+            )
 
         self._graph = build_graph(train, min_rating_positive=4.0)
+        if self.progress:
+            print(
+                f"[graphsage] graph: users={len(self._graph.user_index):,}, "
+                f"items={len(self._graph.item_index):,}, "
+                f"observed_edges={self._graph.edge_label_index.shape[1]:,}",
+                flush=True,
+            )
 
         # filter metadata to items that appear in the graph
         item_ids_in_graph = list(self._graph.item_index.keys())
         meta_df: pd.DataFrame = metadata  # type: ignore[assignment]
         meta_filtered = meta_df[meta_df["parent_asin"].isin(item_ids_in_graph)].copy()
+        if self.progress:
+            print(
+                f"[graphsage] building item features: metadata_items={len(meta_filtered):,}, "
+                f"cache_dir={self.cache_dir}",
+                flush=True,
+            )
 
         item_feats, item_ids = build_item_node_features(
             meta_filtered,
@@ -112,6 +133,12 @@ class GraphSAGERecommender(GraphRecommender):
                 if self.review_features_dir is not None else None,
             use_item_sentiment=True,
         )
+        if self.progress:
+            print(
+                f"[graphsage] item features: shape={item_feats.shape}, "
+                f"aligned_items={len(item_ids):,}",
+                flush=True,
+            )
 
         # align item-features row order to graph.item_index
         item_pos = {iid: pos for pos, iid in enumerate(item_ids)}
@@ -130,6 +157,8 @@ class GraphSAGERecommender(GraphRecommender):
             review_features_dir=Path(str(self.review_features_dir))
                 if self.review_features_dir is not None else None,
         )
+        if self.progress:
+            print(f"[graphsage] user features: shape={user_feats.shape}", flush=True)
 
         # project user features into item-feature dim with a learned linear later;
         # here we just zero-pad / truncate so the unified x has a single dim.
@@ -141,6 +170,8 @@ class GraphSAGERecommender(GraphRecommender):
 
         x = np.vstack([user_feats, item_feats]).astype(np.float32)
         self._x = torch.from_numpy(x).to(self.device)
+        if self.progress:
+            print(f"[graphsage] node feature matrix: shape={self._x.shape}", flush=True)
 
         self._model = _SAGEEdgeModel(item_dim, self.hidden_dim, self.n_layers).to(self.device)
         optimizer = torch.optim.Adam(self._model.parameters(), lr=self.lr)
@@ -150,8 +181,10 @@ class GraphSAGERecommender(GraphRecommender):
         edge_label_rating = self._graph.edge_label_rating.to(self.device)
 
         self._model.train()
-        for _ in range(self.epochs):
+        for epoch in range(self.epochs):
             perm = torch.randperm(edge_label_index.shape[1])
+            epoch_loss = 0.0
+            n_batches = int(np.ceil(perm.shape[0] / self.batch_size))
             for start in range(0, perm.shape[0], self.batch_size):
                 idx = perm[start:start + self.batch_size]
                 batch_edges = edge_label_index[:, idx]
@@ -159,9 +192,16 @@ class GraphSAGERecommender(GraphRecommender):
                 h = self._model.encode(self._x, edge_index)
                 preds = self._model.predict_edge(h, batch_edges)
                 loss = F.mse_loss(preds, batch_y)
+                epoch_loss += float(loss.detach().cpu())
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+            if self.progress:
+                print(
+                    f"[graphsage] epoch {epoch + 1}/{self.epochs}: "
+                    f"batches={n_batches:,}, mean_mse_loss={epoch_loss / max(n_batches, 1):.4f}",
+                    flush=True,
+                )
         self._model.eval()
         return self
 

@@ -53,7 +53,7 @@ def sample_negatives(all_items, exclude, n, rng):
 
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
-                    max_test_rows=None, progress=False):
+                    max_test_rows=None, progress=False, checkpoint_dir=None):
     """Fit each model and return a metrics DataFrame (one row per model)."""
     for name, model in models.items():
         fit_start = perf_counter()
@@ -62,6 +62,11 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         model.fit(train, metadata)
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
+        if checkpoint_dir is not None and name in {"lightgcn", "graphsage"}:
+            path = Path(checkpoint_dir) / f"{name}.pt"
+            model.save_checkpoint(path)
+            if progress:
+                print(f"[{dataset}] checkpointed {name} -> {path}", flush=True)
 
     rating_test = test
     if max_test_rows is not None and len(test) > max_test_rows:
@@ -277,6 +282,7 @@ def build_models(
             device=str(gc.get("device", "auto")),
             min_rating_positive=float(gc.get("min_rating_positive", 4.0)),
             validation_fraction=float(gc.get("validation_fraction", 0.1)),
+            progress=progress,
         )
         models["graphsage"] = GraphSAGERecommender(
             embedder=embedder,
@@ -292,6 +298,7 @@ def build_models(
             device=str(gc.get("device", "auto")),
             cache_dir=af_dir / "title_desc_embeddings",
             review_features_dir=af_dir,
+            progress=progress,
         )
     return models
 
@@ -424,6 +431,8 @@ def main(argv=None):
         max_eval_users=args.max_eval_users,
         max_test_rows=args.max_test_rows,
         progress=not args.quiet,
+        checkpoint_dir=Path(config["processed_dir"]) / args.dataset / "graph_checkpoints"
+        if args.graph else None,
     )
 
     out_dir = Path(config["processed_dir"]) / args.dataset

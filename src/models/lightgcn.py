@@ -32,6 +32,7 @@ class LightGCNRecommender(GraphRecommender):
         device: str = "auto",
         min_rating_positive: float = 4.0,
         validation_fraction: float = 0.1,
+        progress: bool = False,
     ) -> None:
         super().__init__(device=device)
         self.embedding_dim = int(embedding_dim)
@@ -43,6 +44,7 @@ class LightGCNRecommender(GraphRecommender):
         self.seed = int(seed)
         self.min_rating_positive = float(min_rating_positive)
         self.validation_fraction = float(validation_fraction)
+        self.progress = bool(progress)
         self._graph: BipartiteGraph | None = None
         self._model: LightGCN | None = None
         self._calibration_beta: float | None = None
@@ -53,6 +55,12 @@ class LightGCNRecommender(GraphRecommender):
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         self._fit_means(train)
+        if self.progress:
+            print(
+                f"[lightgcn] fit start: rows={len(train):,}, device={self.device}, "
+                f"epochs={self.epochs}, dim={self.embedding_dim}, layers={self.n_layers}",
+                flush=True,
+            )
 
         # train -> (train_only, val) for calibration
         train_only, val = split_validation(
@@ -60,16 +68,32 @@ class LightGCNRecommender(GraphRecommender):
         )
         if val.empty:
             train_only, val = train, train.head(min(64, len(train)))
+        if self.progress:
+            print(
+                f"[lightgcn] calibration split: train_only={len(train_only):,}, "
+                f"val={len(val):,}",
+                flush=True,
+            )
 
         # Build a graph over train_only first to calibrate, then refit on full train
         cal_graph = build_graph(train_only, min_rating_positive=self.min_rating_positive)
+        if self.progress:
+            self._log_graph("calibration graph", cal_graph)
         cal_model = self._train_bpr(cal_graph)
         self._calibration_beta, self._calibration_intercept = self._fit_calibration(
             cal_model, cal_graph, val,
         )
+        if self.progress:
+            print(
+                f"[lightgcn] calibration head: beta={self._calibration_beta:.4f}, "
+                f"intercept={self._calibration_intercept:.4f}",
+                flush=True,
+            )
 
         # Final fit on full train
         self._graph = build_graph(train, min_rating_positive=self.min_rating_positive)
+        if self.progress:
+            self._log_graph("final graph", self._graph)
         self._model = self._train_bpr(self._graph)
 
         # Cache final propagated embeddings so predict() is O(D) per call, not
@@ -77,7 +101,22 @@ class LightGCNRecommender(GraphRecommender):
         final_prop = self._graph.positive_propagation_edge_index.to(self.device)
         with torch.no_grad():
             self._final_embeddings = self._model.get_embedding(final_prop).detach()
+        if self.progress:
+            print(
+                f"[lightgcn] cached final embeddings: "
+                f"shape={tuple(self._final_embeddings.shape)}",
+                flush=True,
+            )
         return self
+
+    def _log_graph(self, label: str, graph: BipartiteGraph) -> None:
+        print(
+            f"[lightgcn] {label}: users={len(graph.user_index):,}, "
+            f"items={len(graph.item_index):,}, "
+            f"observed_edges={graph.edge_label_index.shape[1]:,}, "
+            f"positive_edges={graph.positive_edge_label_index.shape[1]:,}",
+            flush=True,
+        )
 
     def _train_bpr(self, graph: BipartiteGraph) -> LightGCN:
         model = LightGCN(
@@ -97,11 +136,12 @@ class LightGCNRecommender(GraphRecommender):
         positives_by_user = self._positive_items_by_user(graph)
 
         model.train()
-        for _ in range(self.epochs):
+        for epoch in range(self.epochs):
             h = model.get_embedding(prop)
             perm = torch.randperm(pos_edges.shape[1], device=self.device)
             optimizer.zero_grad()
             n_batches = int(np.ceil(perm.shape[0] / self.batch_size))
+            epoch_loss = 0.0
             for start in range(0, perm.shape[0], self.batch_size):
                 idx = perm[start:start + self.batch_size]
                 u = pos_edges[0, idx]
@@ -119,9 +159,16 @@ class LightGCNRecommender(GraphRecommender):
                 pos_score = (u_emb.unsqueeze(1) * pos_emb.unsqueeze(1)).sum(dim=-1)
                 neg_score = (u_emb.unsqueeze(1) * neg_emb).sum(dim=-1)
                 loss = F.softplus(neg_score - pos_score).mean()
+                epoch_loss += float(loss.detach().cpu())
                 is_last = (start // self.batch_size) == n_batches - 1
                 loss.backward(retain_graph=not is_last)
             optimizer.step()
+            if self.progress:
+                print(
+                    f"[lightgcn] epoch {epoch + 1}/{self.epochs}: "
+                    f"batches={n_batches:,}, mean_bpr_loss={epoch_loss / max(n_batches, 1):.4f}",
+                    flush=True,
+                )
         return model.eval()
 
     def _positive_items_by_user(self, graph: BipartiteGraph) -> dict[int, set[int]]:
