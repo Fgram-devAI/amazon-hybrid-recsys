@@ -110,6 +110,20 @@ class LightGCNRecommender(GraphRecommender):
             )
         return self
 
+    def prepare_for_checkpoint(self, train: pd.DataFrame) -> "LightGCNRecommender":
+        """Rebuild train-derived inference state before loading a checkpoint."""
+        torch.manual_seed(self.seed)
+        np.random.seed(self.seed)
+        self._fit_means(train)
+        self._graph = build_graph(train, min_rating_positive=self.min_rating_positive)
+        self._model = LightGCN(
+            num_nodes=self._graph.num_nodes,
+            embedding_dim=self.embedding_dim,
+            num_layers=self.n_layers,
+        ).to(self.device)
+        self._model.eval()
+        return self
+
     def _log_graph(self, label: str, graph: BipartiteGraph) -> None:
         print(
             f"[lightgcn] {label}: users={len(graph.user_index):,}, "
