@@ -213,6 +213,30 @@ Train one graph model without evaluation, preserving the baseline checkpoint:
 This writes `data/processed/video_games/graph_checkpoints/lightgcn_20ep.pt`
 without overwriting the 10-epoch `lightgcn.pt` baseline.
 
+Current LightGCN evidence: moving from 10 to 20 epochs was almost flat on the
+full Video_Games checkpoint eval (`F1@10 0.1454 -> 0.1458`). The next useful
+ranking experiment should change BPR negative sampling, not just epochs:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate \
+  --dataset video_games \
+  --graph-only \
+  --only-model lightgcn \
+  --graph-epochs 40 \
+  --graph-num-negatives 4 \
+  --checkpoint-tag 40ep_neg4 \
+  --train-only
+```
+
+Then evaluate the tagged checkpoint:
+
+```bash
+./.venv/bin/python -m src.evaluation.evaluate_lightgcn_checkpoint \
+  --dataset video_games \
+  --checkpoint data/processed/video_games/graph_checkpoints/lightgcn_40ep_neg4.pt \
+  --output data/processed/video_games/metrics_lightgcn_40ep_neg4_full.json
+```
+
 Re-evaluate stored graph checkpoints without retraining:
 
 ```bash
@@ -226,6 +250,11 @@ Re-evaluate stored graph checkpoints without retraining:
 When comparing longer graph training runs, save checkpoints under distinct names
 such as `lightgcn_10ep.pt` and `lightgcn_20ep.pt` so the 10-epoch baseline remains
 re-evaluable.
+
+GraphSAGE is currently a rating-regression graph model: its 10-epoch checkpoint
+wins RMSE/MAE against LightGCN but is weak on sampled ranking. Do not expect
+ranking gains from simply increasing epochs; a future ranking-oriented GraphSAGE
+variant should change the objective/head rather than only `lr` or `epochs`.
 
 Dependencies installed once via `pip install -r requirements.txt` (heavy: torch
 pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. Graph
@@ -264,6 +293,7 @@ graph_checkpoints/
   lightgcn.pt
   graphsage.pt
   lightgcn_20ep.pt        # optional tagged rerun
+  lightgcn_40ep_neg4.pt   # optional BPR negative-sampling rerun
 metrics.json              # latest normal evaluator run
 metrics_lightgcn_checkpoint.json
 metrics_graphsage_checkpoint.json

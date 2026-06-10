@@ -367,6 +367,10 @@ def main(argv=None):
         "--graph-epochs", type=int,
         help="override graph.epochs for this run, e.g. 20",
     )
+    parser.add_argument(
+        "--graph-num-negatives", type=int,
+        help="override graph.num_negatives for this run, e.g. 4 for LightGCN BPR",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -389,10 +393,14 @@ def main(argv=None):
         parser.error("--train-only requires --graph or --graph-only")
     if args.graph_epochs is not None and not args.graph:
         parser.error("--graph-epochs requires --graph or --graph-only")
+    if args.graph_num_negatives is not None and not args.graph:
+        parser.error("--graph-num-negatives requires --graph or --graph-only")
 
     config = load_config(args.config)
     if args.graph_epochs is not None:
         config.setdefault("graph", {})["epochs"] = args.graph_epochs
+    if args.graph_num_negatives is not None:
+        config.setdefault("graph", {})["num_negatives"] = args.graph_num_negatives
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
     if not args.quiet:
         print(

@@ -322,13 +322,14 @@ def test_evaluate_cli_filters_only_model_and_train_only(monkeypatch, tmp_path):
     }
 
 
-def test_graph_epochs_overrides_config(monkeypatch, tmp_path):
+def test_graph_overrides_update_config(monkeypatch, tmp_path):
     from src.evaluation import evaluate as ev
 
     captured: dict = {}
 
     def fake_build_models(config, *args, **kwargs):
         captured["epochs"] = config["graph"]["epochs"]
+        captured["num_negatives"] = config["graph"]["num_negatives"]
         return {}
 
     def fake_evaluate_models(*args, **kwargs):
@@ -348,14 +349,21 @@ def test_graph_epochs_overrides_config(monkeypatch, tmp_path):
         "processed_dir": str(tmp_path),
         "models": {"ranking_random_seed": 42},
         "hybrid": {"alpha": 0.5},
-        "graph": {"epochs": 10},
+        "graph": {"epochs": 10, "num_negatives": 1},
         "evaluation": {"k": 10},
         "preprocessing": {"min_rating_relevant": 4.0},
     })
     monkeypatch.setattr("src.models.embedding.build_embedder", lambda _c: object())
 
-    ev.main(["--dataset", "tiny", "--graph-only", "--graph-epochs", "20", "--quiet"])
+    ev.main([
+        "--dataset", "tiny",
+        "--graph-only",
+        "--graph-epochs", "20",
+        "--graph-num-negatives", "4",
+        "--quiet",
+    ])
     assert captured["epochs"] == 20
+    assert captured["num_negatives"] == 4
 
 
 def test_graph_only_rejects_advanced_and_tune_alpha():
@@ -376,7 +384,7 @@ def test_checkpoint_tag_requires_graph():
         ev.main(["--dataset", "tiny", "--checkpoint-tag", "20ep", "--quiet"])
 
 
-def test_train_only_and_graph_epochs_require_graph():
+def test_train_only_and_graph_overrides_require_graph():
     import pytest
     from src.evaluation import evaluate as ev
 
@@ -384,3 +392,5 @@ def test_train_only_and_graph_epochs_require_graph():
         ev.main(["--dataset", "tiny", "--train-only", "--quiet"])
     with pytest.raises(SystemExit):
         ev.main(["--dataset", "tiny", "--graph-epochs", "20", "--quiet"])
+    with pytest.raises(SystemExit):
+        ev.main(["--dataset", "tiny", "--graph-num-negatives", "4", "--quiet"])
