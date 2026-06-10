@@ -178,6 +178,7 @@ def build_models(
     progress=False,
     include_ablation=False,
     graph=False,
+    graph_only=False,
 ):
     """Construct the model set, sharing component instances with the hybrids.
 
@@ -199,17 +200,23 @@ def build_models(
 
     mc = config.get("models", {})
     af = config.get("advanced_features", {})
-    cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
-    content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
-    svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
-
+    models = {}
+    content = None
+    svd = None
     blend_alpha = float(alpha if alpha is not None else config["hybrid"]["alpha"])
-    models = {"content": content, "svd": svd}
-    if not no_knn:
-        models["item_knn"] = KNNRecommender()
-    models["hybrid"] = WeightedHybrid(svd, content, alpha=blend_alpha)
 
-    if advanced:
+    if not graph_only:
+        cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
+        content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
+        svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
+
+        models = {"content": content, "svd": svd}
+        if not no_knn:
+            models["item_knn"] = KNNRecommender()
+        models["hybrid"] = WeightedHybrid(svd, content, alpha=blend_alpha)
+
+    if advanced and not graph_only:
+        assert svd is not None
         seed = int(mc.get("ranking_random_seed", 42))
         af_dir = Path(config["processed_dir"]) / dataset / "advanced_features"
         models["random"] = RandomRecommender(seed=seed)
@@ -313,6 +320,10 @@ def main(argv=None):
         "--graph", action="store_true",
         help="register lightgcn + graphsage (requires torch_geometric)",
     )
+    parser.add_argument(
+        "--graph-only", action="store_true",
+        help="evaluate only lightgcn + graphsage; implies --graph and skips baseline/advanced models",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -323,6 +334,12 @@ def main(argv=None):
 
     if args.include_ablation and not args.advanced:
         parser.error("--include-ablation requires --advanced")
+    if args.graph_only:
+        args.graph = True
+    if args.graph_only and args.advanced:
+        parser.error("--graph-only cannot be combined with --advanced")
+    if args.graph_only and args.tune_alpha:
+        parser.error("--graph-only cannot be combined with --tune-alpha")
 
     config = load_config(args.config)
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
@@ -383,6 +400,7 @@ def main(argv=None):
         progress=not args.quiet,
         include_ablation=args.include_ablation,
         graph=args.graph,
+        graph_only=args.graph_only,
     )
 
     table = evaluate_models(

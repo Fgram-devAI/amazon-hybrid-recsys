@@ -175,3 +175,49 @@ def test_include_ablation_without_advanced_is_rejected():
     from src.evaluation import evaluate as ev
     with pytest.raises(SystemExit):
         ev.main(["--dataset", "tiny", "--no-knn", "--include-ablation", "--quiet"])
+
+
+def test_evaluate_cli_accepts_graph_only_flag(monkeypatch, tmp_path):
+    from src.evaluation import evaluate as ev
+
+    captured: dict = {}
+
+    def fake_build_models(*args, **kwargs):
+        captured["graph"] = kwargs.get("graph")
+        captured["graph_only"] = kwargs.get("graph_only")
+        return {}
+
+    def fake_evaluate_models(*args, **kwargs):
+        return pd.DataFrame([{"model": "stub", "rmse": 0.0, "mae": 0.0}])
+
+    def fake_load_processed(processed_dir, dataset):
+        return (
+            pd.DataFrame(columns=["user_id", "parent_asin", "rating"]),
+            pd.DataFrame(columns=["user_id", "parent_asin", "rating"]),
+            pd.DataFrame(columns=["parent_asin"]),
+        )
+
+    monkeypatch.setattr(ev, "build_models", fake_build_models)
+    monkeypatch.setattr(ev, "evaluate_models", fake_evaluate_models)
+    monkeypatch.setattr(ev, "_load_processed", fake_load_processed)
+    monkeypatch.setattr("src.data.config.load_config", lambda _p: {
+        "processed_dir": str(tmp_path),
+        "models": {"ranking_random_seed": 42},
+        "hybrid": {"alpha": 0.5},
+        "evaluation": {"k": 10},
+        "preprocessing": {"min_rating_relevant": 4.0},
+    })
+    monkeypatch.setattr("src.models.embedding.build_embedder", lambda _c: object())
+
+    ev.main(["--dataset", "tiny", "--graph-only", "--quiet"])
+    assert captured == {"graph": True, "graph_only": True}
+
+
+def test_graph_only_rejects_advanced_and_tune_alpha():
+    import pytest
+    from src.evaluation import evaluate as ev
+
+    with pytest.raises(SystemExit):
+        ev.main(["--dataset", "tiny", "--graph-only", "--advanced", "--quiet"])
+    with pytest.raises(SystemExit):
+        ev.main(["--dataset", "tiny", "--graph-only", "--tune-alpha", "--quiet"])

@@ -14,6 +14,18 @@ def _config():
             "category_vocab_max": 16,
             "category_min_doc_freq": 1,
         },
+        "graph": {
+            "embedding_dim": 4,
+            "n_layers": 1,
+            "epochs": 1,
+            "lr": 0.05,
+            "batch_size": 4,
+            "num_negatives": 1,
+            "device": "cpu",
+            "seed": 0,
+            "min_rating_positive": 4.0,
+            "validation_fraction": 0.1,
+        },
     }
 
 
@@ -117,3 +129,29 @@ def test_build_models_with_graph_flag_registers_lightgcn_and_graphsage():
     )
     assert "lightgcn" in models
     assert "graphsage" in models
+
+
+def test_build_models_graph_only_registers_only_graph_models():
+    models = build_models(
+        _config(),
+        "tiny",
+        FakeEmbedder(dim=8),
+        no_knn=True,
+        advanced=False,
+        graph=True,
+        graph_only=True,
+    )
+    assert set(models) == {"lightgcn", "graphsage"}
+
+
+def test_build_models_graph_only_ignores_advanced_model_registration():
+    models = build_models(
+        _config(),
+        "tiny",
+        FakeEmbedder(dim=8),
+        no_knn=True,
+        advanced=True,
+        graph=True,
+        graph_only=True,
+    )
+    assert set(models) == {"lightgcn", "graphsage"}
