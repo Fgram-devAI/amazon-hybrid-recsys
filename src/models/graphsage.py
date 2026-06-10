@@ -92,95 +92,10 @@ class GraphSAGERecommender(GraphRecommender):
         self._final_embeddings: torch.Tensor | None = None
 
     def fit(self, train: pd.DataFrame, metadata: object = None) -> "GraphSAGERecommender":
-        if metadata is None:
-            raise ValueError("GraphSAGERecommender.fit requires metadata")
-        torch.manual_seed(self.seed)
-        np.random.seed(self.seed)
-        self._fit_means(train)
-        if self.progress:
-            print(
-                f"[graphsage] fit start: rows={len(train):,}, device={self.device}, "
-                f"epochs={self.epochs}, hidden_dim={self.hidden_dim}, layers={self.n_layers}",
-                flush=True,
-            )
-
-        self._graph = build_graph(train, min_rating_positive=4.0)
-        if self.progress:
-            print(
-                f"[graphsage] graph: users={len(self._graph.user_index):,}, "
-                f"items={len(self._graph.item_index):,}, "
-                f"observed_edges={self._graph.edge_label_index.shape[1]:,}",
-                flush=True,
-            )
-
-        # filter metadata to items that appear in the graph
-        item_ids_in_graph = list(self._graph.item_index.keys())
-        meta_df: pd.DataFrame = metadata  # type: ignore[assignment]
-        meta_filtered = meta_df[meta_df["parent_asin"].isin(item_ids_in_graph)].copy()
-        if self.progress:
-            print(
-                f"[graphsage] building item features: metadata_items={len(meta_filtered):,}, "
-                f"cache_dir={self.cache_dir}",
-                flush=True,
-            )
-
-        item_feats, item_ids = build_item_node_features(
-            meta_filtered,
-            embedder=self.embedder,  # type: ignore[arg-type]
-            generic_roots=self.generic_roots,
-            max_vocab=self.max_vocab,
-            min_doc_freq=self.min_doc_freq,
-            cache_dir=Path(str(self.cache_dir)) if self.cache_dir is not None else None,
-            review_features_dir=Path(str(self.review_features_dir))
-                if self.review_features_dir is not None else None,
-            use_item_sentiment=True,
-        )
-        if self.progress:
-            print(
-                f"[graphsage] item features: shape={item_feats.shape}, "
-                f"aligned_items={len(item_ids):,}",
-                flush=True,
-            )
-
-        # align item-features row order to graph.item_index
-        item_pos = {iid: pos for pos, iid in enumerate(item_ids)}
-        item_order = np.asarray(
-            [item_pos[iid] for iid in self._graph.item_index.keys()
-             if iid in item_pos],
-            dtype=np.int64,
-        )
-        item_feats = item_feats[item_order]
-        item_dim = item_feats.shape[1]
-
-        user_ids = list(self._graph.user_index.keys())
-        user_feats, _ = build_user_node_features(
-            train,
-            user_ids=user_ids,
-            review_features_dir=Path(str(self.review_features_dir))
-                if self.review_features_dir is not None else None,
-        )
-        if self.progress:
-            print(f"[graphsage] user features: shape={user_feats.shape}", flush=True)
-
-        # project user features into item-feature dim with a learned linear later;
-        # here we just zero-pad / truncate so the unified x has a single dim.
-        if user_feats.shape[1] < item_dim:
-            pad = np.zeros((user_feats.shape[0], item_dim - user_feats.shape[1]), dtype=np.float32)
-            user_feats = np.hstack([user_feats, pad])
-        elif user_feats.shape[1] > item_dim:
-            user_feats = user_feats[:, :item_dim]
-
-        x = np.vstack([user_feats, item_feats]).astype(np.float32)
-        self._x = torch.from_numpy(x).to(self.device)
-        if self.progress:
-            print(f"[graphsage] node feature matrix: shape={self._x.shape}", flush=True)
-
-        self._model = _SAGEEdgeModel(item_dim, self.hidden_dim, self.n_layers).to(self.device)
+        edge_index, edge_label_index, edge_label_rating = self._prepare_state(train, metadata)
+        assert self._model is not None
+        assert self._x is not None
         optimizer = torch.optim.Adam(self._model.parameters(), lr=self.lr)
-
-        edge_index = self._graph.propagation_edge_index.to(self.device)
-        edge_label_index = self._graph.edge_label_index.to(self.device)
-        edge_label_rating = self._graph.edge_label_rating.to(self.device)
 
         self._model.train()
         for epoch in range(self.epochs):
@@ -213,6 +128,115 @@ class GraphSAGERecommender(GraphRecommender):
                     flush=True,
                 )
         self._model.eval()
+        self.cache_final_embeddings(edge_index)
+        return self
+
+    def _prepare_state(
+        self,
+        train: pd.DataFrame,
+        metadata: object = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if metadata is None:
+            raise ValueError("GraphSAGERecommender.fit requires metadata")
+        torch.manual_seed(self.seed)
+        np.random.seed(self.seed)
+        self._fit_means(train)
+        if self.progress:
+            print(
+                f"[graphsage] fit start: rows={len(train):,}, device={self.device}, "
+                f"epochs={self.epochs}, hidden_dim={self.hidden_dim}, layers={self.n_layers}",
+                flush=True,
+            )
+
+        self._graph = build_graph(train, min_rating_positive=4.0)
+        if self.progress:
+            print(
+                f"[graphsage] graph: users={len(self._graph.user_index):,}, "
+                f"items={len(self._graph.item_index):,}, "
+                f"observed_edges={self._graph.edge_label_index.shape[1]:,}",
+                flush=True,
+            )
+
+        item_ids_in_graph = list(self._graph.item_index.keys())
+        meta_df: pd.DataFrame = metadata  # type: ignore[assignment]
+        meta_filtered = meta_df[meta_df["parent_asin"].isin(item_ids_in_graph)].copy()
+        if self.progress:
+            print(
+                f"[graphsage] building item features: metadata_items={len(meta_filtered):,}, "
+                f"cache_dir={self.cache_dir}",
+                flush=True,
+            )
+
+        item_feats, item_ids = build_item_node_features(
+            meta_filtered,
+            embedder=self.embedder,  # type: ignore[arg-type]
+            generic_roots=self.generic_roots,
+            max_vocab=self.max_vocab,
+            min_doc_freq=self.min_doc_freq,
+            cache_dir=Path(str(self.cache_dir)) if self.cache_dir is not None else None,
+            review_features_dir=Path(str(self.review_features_dir))
+                if self.review_features_dir is not None else None,
+            use_item_sentiment=True,
+        )
+        if self.progress:
+            print(
+                f"[graphsage] item features: shape={item_feats.shape}, "
+                f"aligned_items={len(item_ids):,}",
+                flush=True,
+            )
+
+        item_pos = {iid: pos for pos, iid in enumerate(item_ids)}
+        item_order = np.asarray(
+            [item_pos[iid] for iid in self._graph.item_index.keys()
+             if iid in item_pos],
+            dtype=np.int64,
+        )
+        item_feats = item_feats[item_order]
+        item_dim = item_feats.shape[1]
+
+        user_ids = list(self._graph.user_index.keys())
+        user_feats, _ = build_user_node_features(
+            train,
+            user_ids=user_ids,
+            review_features_dir=Path(str(self.review_features_dir))
+                if self.review_features_dir is not None else None,
+        )
+        if self.progress:
+            print(f"[graphsage] user features: shape={user_feats.shape}", flush=True)
+
+        if user_feats.shape[1] < item_dim:
+            pad = np.zeros((user_feats.shape[0], item_dim - user_feats.shape[1]), dtype=np.float32)
+            user_feats = np.hstack([user_feats, pad])
+        elif user_feats.shape[1] > item_dim:
+            user_feats = user_feats[:, :item_dim]
+
+        x = np.vstack([user_feats, item_feats]).astype(np.float32)
+        self._x = torch.from_numpy(x).to(self.device)
+        if self.progress:
+            print(f"[graphsage] node feature matrix: shape={self._x.shape}", flush=True)
+
+        self._model = _SAGEEdgeModel(item_dim, self.hidden_dim, self.n_layers).to(self.device)
+        return (
+            self._graph.propagation_edge_index.to(self.device),
+            self._graph.edge_label_index.to(self.device),
+            self._graph.edge_label_rating.to(self.device),
+        )
+
+    def prepare_for_checkpoint(
+        self,
+        train: pd.DataFrame,
+        metadata: object = None,
+    ) -> "GraphSAGERecommender":
+        self._prepare_state(train, metadata)
+        assert self._model is not None
+        self._model.eval()
+        return self
+
+    def cache_final_embeddings(self, edge_index: torch.Tensor | None = None) -> None:
+        if self._model is None or self._x is None or self._graph is None:
+            raise ValueError("GraphSAGE state must be prepared before caching embeddings")
+        if edge_index is None:
+            edge_index = self._graph.propagation_edge_index.to(self.device)
         with torch.no_grad():
             self._final_embeddings = self._model.encode(self._x, edge_index).detach()
         if self.progress:
@@ -221,7 +245,6 @@ class GraphSAGERecommender(GraphRecommender):
                 f"shape={tuple(self._final_embeddings.shape)}",
                 flush=True,
             )
-        return self
 
     def predict(self, user_id: str, parent_asin: str) -> float:
         if self._model is None or self._graph is None or self._final_embeddings is None:
