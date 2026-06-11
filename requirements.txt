@@ -14,7 +14,14 @@ implicit               # ALS for implicit/collaborative filtering
 sentence-transformers  # Granite/MiniLM text embeddings for content-based model
 transformers           # HF sentiment pipeline for real runs (tests use FakeSentimentModel)
 torch_geometric>=2.6,<3.0  # LightGCN + SAGEConv built-ins; CPU/MPS on darwin arm64
-networkx>=3.3,<4.0         # used here only for the optional projection helper; classical EDA lives in feat/graph-eda
+
+# Graph EDA + community/spectral analysis (feat/graph-eda-community)
+networkx>=3.3,<4.0      # built-in louvain_communities, bipartite utilities
+
+# Optional graph extras — install manually if you want Leiden / faster spectral:
+#   pip install leidenalg python-igraph pyamg
+# leidenalg / python-igraph: stronger modularity refinement than Louvain
+# pyamg: enables eigen_solver='amg' for sklearn SpectralClustering on big sparse graphs
 
 # App + plots
 streamlit
