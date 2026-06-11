@@ -181,6 +181,32 @@ nudged it slightly further. GraphSAGE with MSE remains the better graph rating
 predictor, while GraphSAGE-BPR substantially improves GraphSAGE ranking but still
 trails LightGCN.
 
+### GraphSAGE-BPR feature ablation (Video_Games)
+
+Diagnostic from `feat/graphsage-feature-ablation` — measures which node-feature groups
+move GraphSAGE-BPR's metrics at the default training budget (`graph.epochs=10`, sampled
+candidate eval, `n_eval_users ≈ 79,248`, seed 42).
+
+| feature_set      | item feature composition                                            | RMSE | MAE | P@10 | R@10 | F1@10 |
+|------------------|---------------------------------------------------------------------|-----:|----:|-----:|-----:|------:|
+| `full`           | text + categories + numeric + item sentiment + user generosity      |      |     |      |      |       |
+| `no_text`        | categories + numeric + item sentiment + user generosity             |      |     |      |      |       |
+| `no_sentiment`   | text + categories + numeric                                         |      |     |      |      |       |
+| `metadata_only`  | categories + numeric                                                |      |     |      |      |       |
+| `structure_only` (optional) | 3-col train-structural `[log_degree, mean_rating, positive_ratio]` |      |     |      |      |       |
+
+Reference rows from prior runs for comparison:
+
+| Model         | RMSE   | MAE    | P@10   | R@10   | F1@10  |
+|---------------|-------:|-------:|-------:|-------:|-------:|
+| popularity    | 1.2270 | 0.9059 | 0.0776 | 0.5108 | 0.1284 |
+| lightgcn (10ep) | 1.2472 | 0.9556 | 0.0880 | 0.5755 | 0.1454 |
+
+**Decision rule** (from `docs/graph-ablation.md`): if `no_sentiment` matches or beats
+`full`, sentiment is described as optional/noisy. If `no_text` collapses, text
+embeddings matter. If `metadata_only` is close to `full`, the categorical/numeric
+metadata dominates. Interpretation paragraph is filled in after the runs.
+
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
 ## Graph Recommender Models (LightGCN + GraphSAGE)
