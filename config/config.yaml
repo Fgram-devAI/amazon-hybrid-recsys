@@ -81,3 +81,11 @@ graph:
   seed: 42
   min_rating_positive: 4.0
   validation_fraction: 0.1   # LightGCN calibration slice carved from train
+
+graph_analysis:
+  min_shared_users: 3              # item-item edge requires >= N shared users
+  projection_weight: weight_jaccard # default weight used by community/spectral algorithms
+  top_n_items: null                # optional safety cap on items (by training degree); null = all
+  spectral_k_values: [10, 25, 50]  # candidate k values for spectral clustering report
+  girvan_newman_max_nodes: 500     # subgraph node cap; algorithm refuses larger inputs
+  random_state: 42

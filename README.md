@@ -313,6 +313,100 @@ pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. Graph
 device selection follows `cuda -> mps -> cpu`; MPS is opportunistic on Apple
 Silicon because PyG operator coverage can vary.
 
+## Graph EDA + Community Analysis (feat/graph-eda-community, Spec 2)
+
+A read-only analysis of the train-only user-item graph and its item-item
+co-rating projection. Produces JSON reports under
+`data/processed/<dataset>/graph_analysis/` (gitignored).
+
+Smoke run:
+
+```bash
+./.venv/bin/python -m src.graph.analyze \
+  --dataset video_games \
+  --min-shared-users 20 \
+  --top-n-items 2000 \
+  --spectral-k-values 10,25 \
+  --output-name report_min20_top2000.json
+```
+
+Main bounded run:
+
+```bash
+./.venv/bin/python -m src.graph.analyze \
+  --dataset video_games \
+  --min-shared-users 10 \
+  --top-n-items 5000 \
+  --spectral-k-values 10,25,50 \
+  --output-name report_min10_top5000.json
+```
+
+Full Video_Games projection run:
+
+```bash
+./.venv/bin/python -m src.graph.analyze \
+  --dataset video_games \
+  --min-shared-users 3 \
+  --spectral-k-values 50 \
+  --output-name report_min3_full.json
+```
+
+What it computes:
+
+- Structural EDA on the bipartite and item-item graphs (degrees,
+  density, connected components, mean clustering coefficient, weight
+  distributions for both `weight_count` and `weight_jaccard`).
+- Community detection on the item-item projection (default weight =
+  `weight_jaccard`): **Louvain** (NetworkX built-in), **Leiden**
+  (optional — skipped with a warning when `leidenalg` / `python-igraph`
+  is not installed), **Spectral clustering** (scikit-learn, sparse
+  precomputed Jaccard affinity, restricted to the largest connected
+  component) across the `spectral_k_values` configured in
+  `graph_analysis`, and **Girvan-Newman** as a small-subgraph
+  illustrative baseline. Full-graph Girvan-Newman refuses inputs above
+  `girvan_newman_max_nodes`; the analyzer also runs a capped demo on the
+  top-degree nodes from the largest Louvain community.
+- Category-alignment vs filtered category labels derived from
+  `metadata.parquet` using the configured generic-root filtering convention:
+  purity + normalized mutual information per community method. If labels cannot
+  be derived, alignment is skipped cleanly.
+
+Video_Games graph-analysis summary:
+
+| Projection | Items | Edges | Largest CC | Louvain modularity | Louvain purity | Louvain NMI | Spectral k=50 NMI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| min20 / top2000 | 2,000 | 2,611 | 572 | 0.757 | 0.784 | 0.681 | n/a |
+| min10 / top5000 | 5,000 | 12,349 | 1,797 | 0.779 | 0.738 | 0.637 | 0.496 |
+| min5 / top10000 | 10,000 | 51,477 | 4,755 | 0.744 | 0.663 | 0.603 | 0.325 |
+| min3 / top15000 | 15,000 | 156,541 | 9,800 | 0.698 | 0.534 | 0.550 | 0.184 |
+| min3 / full | 25,560 | 157,941 | 10,612 | 0.716 | 0.706 | 0.580 | 0.162 |
+
+The projection tradeoff is intentional: stricter co-rating thresholds give
+smaller but cleaner communities, while broader/full projections improve catalog
+coverage and expose the long-tail fragmentation. Louvain is the most stable
+community method here; fixed-k spectral clustering is weaker on category
+alignment. Girvan-Newman is intentionally skipped on these full projections
+because it is only tractable for small subgraphs (`girvan_newman_max_nodes=500`);
+the report keeps the illustrative capped Louvain-community run separately as
+`girvan_newman_louvain_subgraph`. On the full Video_Games projection, that capped
+run produced a degenerate 499/1 split with near-zero modularity and near-zero
+NMI, so it is reported only as an illustrative baseline rather than a useful
+community method for this graph.
+
+Optional methods (not required to grade):
+
+```bash
+pip install leidenalg python-igraph pyamg
+```
+
+- `leidenalg` + `python-igraph`: enables Leiden (stronger modularity
+  refinement than Louvain).
+- `pyamg`: enables `eigen_solver='amg'` for `SpectralClustering` on
+  large sparse graphs; without it, spectral falls back to `arpack`.
+
+Leakage rule (inherited): the graph and all analysis read TRAIN
+interactions only; this module never feeds back into any model feature.
+
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
