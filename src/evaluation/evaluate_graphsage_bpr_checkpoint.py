@@ -23,6 +23,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-eval-users", type=int)
     parser.add_argument("--max-test-rows", type=int)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--feature-set",
+        choices=["full", "no_text", "no_sentiment", "metadata_only", "structure_only"],
+        default="full",
+        help="feature_set the saved checkpoint was trained with; matrix dim must match",
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
@@ -62,6 +68,7 @@ def main(argv: list[str] | None = None) -> None:
         review_features_dir=af_dir,
         validation_fraction=float(gc.get("validation_fraction", 0.1)),
         progress=progress,
+        feature_set=args.feature_set,
     )
 
     start = perf_counter()
