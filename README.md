@@ -181,6 +181,39 @@ nudged it slightly further. GraphSAGE with MSE remains the better graph rating
 predictor, while GraphSAGE-BPR substantially improves GraphSAGE ranking but still
 trails LightGCN.
 
+### GraphSAGE-BPR feature ablation (Video_Games)
+
+Diagnostic from `feat/graphsage-feature-ablation` — measures which node-feature groups
+move GraphSAGE-BPR's metrics at the default training budget (`graph.epochs=10`, sampled
+candidate eval, `n_eval_users ≈ 79,248`, seed 42).
+
+| feature_set      | item feature composition                                            | RMSE | MAE | P@10 | R@10 | F1@10 |
+|------------------|---------------------------------------------------------------------|-----:|----:|-----:|-----:|------:|
+| `full`           | text + categories + numeric + item sentiment + user generosity      | 1.2554 | 0.9858 | 0.0339 | 0.2142 | 0.0556 |
+| `no_text`        | categories + numeric + item sentiment + user generosity             | 1.2589 | 0.9689 | 0.0211 | 0.1326 | 0.0342 |
+| `no_sentiment`   | text + categories + numeric                                         | 1.2556 | 0.9826 | 0.0427 | 0.2706 | 0.0699 |
+| `metadata_only`  | categories + numeric                                                | 1.2561 | 0.9809 | 0.0211 | 0.1363 | 0.0346 |
+| `structure_only` (optional) | 3-col train-structural `[log_degree, mean_rating, positive_ratio]` | not run | not run | not run | not run | not run |
+
+Reference rows from prior runs for comparison:
+
+| Model         | RMSE   | MAE    | P@10   | R@10   | F1@10  |
+|---------------|-------:|-------:|-------:|-------:|-------:|
+| popularity    | 1.2270 | 0.9059 | 0.0776 | 0.5108 | 0.1284 |
+| lightgcn (10ep) | 1.2472 | 0.9556 | 0.0880 | 0.5755 | 0.1454 |
+
+**Decision rule** (from `docs/graph-ablation.md`): if `no_sentiment` matches or beats
+`full`, sentiment is described as optional/noisy. If `no_text` collapses, text
+embeddings matter. If `metadata_only` is close to `full`, the categorical/numeric
+metadata dominates.
+
+Interpretation: text embeddings are the useful GraphSAGE-BPR feature group here.
+Removing text (`no_text`) collapses ranking to the same level as `metadata_only`,
+so categories/numeric metadata plus sentiment do not rescue the model. Removing
+sentiment (`no_sentiment`) improves ranking over `full`, so sentiment/user
+generosity is treated as optional or noisy for GraphSAGE-BPR at this training
+budget. LightGCN remains the stronger graph ranker.
+
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
 ## Graph Recommender Models (LightGCN + GraphSAGE)
