@@ -74,6 +74,7 @@ def test_orchestrator_writes_report_with_expected_keys(tmp_dataset: Path) -> Non
     assert "louvain" in report["communities"]
     assert "spectral_k=2" in report["communities"]
     assert "girvan_newman" in report["communities"]
+    assert "girvan_newman_louvain_subgraph" in report["communities"]
     # Leiden key is always present (None when leidenalg is missing).
     assert "leiden" in report["communities"]
     # Each present method reports a partition + alignment block.
@@ -81,6 +82,9 @@ def test_orchestrator_writes_report_with_expected_keys(tmp_dataset: Path) -> Non
     assert louvain["n_communities"] == 2
     assert "alignment" in louvain
     assert louvain["alignment"]["purity"] == pytest.approx(1.0)
+    gn_subgraph = report["communities"]["girvan_newman_louvain_subgraph"]
+    assert gn_subgraph["extras"]["source"] == "largest_louvain_community_top_degree"
+    assert gn_subgraph["extras"]["n_nodes_used"] <= 500
 
 
 def test_orchestrator_supports_overrides_and_custom_output(tmp_dataset: Path) -> None:

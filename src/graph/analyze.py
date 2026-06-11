@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +96,36 @@ def _serialize_result(
     return payload
 
 
+def _run_girvan_newman_louvain_subgraph(
+    item_graph: Any,
+    louvain_result: CommunityResult,
+    max_nodes: int,
+    weight: str,
+) -> CommunityResult | None:
+    """Run Girvan-Newman on top-degree nodes from the largest Louvain community."""
+    if not louvain_result.communities:
+        return None
+
+    largest = max(louvain_result.communities, key=len)
+    if not largest:
+        return None
+
+    ranked_nodes = sorted(largest, key=lambda node: item_graph.degree(node), reverse=True)
+    selected = ranked_nodes[:max_nodes]
+    subgraph = item_graph.subgraph(selected).copy()
+    result = run_girvan_newman(subgraph, max_nodes=max_nodes, weight=weight)
+    return replace(
+        result,
+        method="girvan_newman_louvain_subgraph",
+        extras={
+            **result.extras,
+            "source": "largest_louvain_community_top_degree",
+            "source_louvain_community_size": len(largest),
+            "n_nodes_selected": len(selected),
+        },
+    )
+
+
 def run_graph_analysis(
     processed_dir: Path,
     dataset: str,
@@ -142,9 +172,8 @@ def run_graph_analysis(
 
     communities: dict[str, dict[str, Any] | None] = {}
     _LOG.info("running Louvain community detection")
-    communities["louvain"] = _serialize_result(
-        run_louvain(item_graph, weight=weight, seed=seed), labels
-    )
+    louvain_result = run_louvain(item_graph, weight=weight, seed=seed)
+    communities["louvain"] = _serialize_result(louvain_result, labels)
     _LOG.info("running Leiden community detection (optional)")
     communities["leiden"] = _serialize_result(
         run_leiden(item_graph, weight=weight, seed=seed), labels
@@ -176,6 +205,17 @@ def run_graph_analysis(
             exc,
         )
         communities["girvan_newman"] = None
+
+    _LOG.info("running Girvan-Newman on largest Louvain community subgraph")
+    communities["girvan_newman_louvain_subgraph"] = _serialize_result(
+        _run_girvan_newman_louvain_subgraph(
+            item_graph,
+            louvain_result,
+            max_nodes=int(knobs.get("girvan_newman_max_nodes", 500)),
+            weight=weight,
+        ),
+        labels,
+    )
 
     report: dict[str, Any] = {
         "dataset": dataset,

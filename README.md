@@ -363,8 +363,9 @@ What it computes:
   precomputed Jaccard affinity, restricted to the largest connected
   component) across the `spectral_k_values` configured in
   `graph_analysis`, and **Girvan-Newman** as a small-subgraph
-  illustrative baseline (refuses inputs above
-  `girvan_newman_max_nodes`).
+  illustrative baseline. Full-graph Girvan-Newman refuses inputs above
+  `girvan_newman_max_nodes`; the analyzer also runs a capped demo on the
+  top-degree nodes from the largest Louvain community.
 - Category-alignment vs filtered category labels derived from
   `metadata.parquet` using the configured generic-root filtering convention:
   purity + normalized mutual information per community method. If labels cannot
@@ -385,7 +386,9 @@ smaller but cleaner communities, while broader/full projections improve catalog
 coverage and expose the long-tail fragmentation. Louvain is the most stable
 community method here; fixed-k spectral clustering is weaker on category
 alignment. Girvan-Newman is intentionally skipped on these full projections
-because it is only tractable for small subgraphs (`girvan_newman_max_nodes=500`).
+because it is only tractable for small subgraphs (`girvan_newman_max_nodes=500`);
+the report keeps the illustrative capped Louvain-community run separately as
+`girvan_newman_louvain_subgraph`.
 
 Optional methods (not required to grade):
 
