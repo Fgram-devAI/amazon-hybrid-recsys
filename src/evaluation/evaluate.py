@@ -204,6 +204,7 @@ def build_models(
     include_ablation=False,
     graph=False,
     graph_only=False,
+    graph_feature_set=None,
 ):
     """Construct the model set, sharing component instances with the hybrids.
 
@@ -341,6 +342,7 @@ def build_models(
             review_features_dir=af_dir,
             validation_fraction=float(gc.get("validation_fraction", 0.1)),
             progress=progress,
+            feature_set=graph_feature_set or "full",
         )
     return models
 
@@ -397,6 +399,11 @@ def main(argv=None):
         "--graph-weight-decay", type=float,
         help="override graph.weight_decay for this run, e.g. 1e-5",
     )
+    parser.add_argument(
+        "--graph-feature-set",
+        choices=["full", "no_text", "no_sentiment", "metadata_only", "structure_only"],
+        help="GraphSAGE-BPR item-node feature composition; no effect on lightgcn/graphsage (MSE)",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -423,6 +430,8 @@ def main(argv=None):
         parser.error("--graph-num-negatives requires --graph or --graph-only")
     if args.graph_weight_decay is not None and not args.graph:
         parser.error("--graph-weight-decay requires --graph or --graph-only")
+    if args.graph_feature_set is not None and not args.graph:
+        parser.error("--graph-feature-set requires --graph or --graph-only")
 
     config = load_config(args.config)
     if args.graph_epochs is not None:
@@ -491,6 +500,7 @@ def main(argv=None):
         include_ablation=args.include_ablation,
         graph=args.graph,
         graph_only=args.graph_only,
+        graph_feature_set=args.graph_feature_set,
     )
     if args.only_model:
         if args.only_model not in models:
@@ -508,7 +518,12 @@ def main(argv=None):
 
     out_dir = Path(config["processed_dir"]) / args.dataset
     out_dir.mkdir(parents=True, exist_ok=True)
-    metrics_path = out_dir / "metrics.json"
+    metrics_filename = (
+        f"metrics_{args.checkpoint_tag}.json"
+        if args.checkpoint_tag
+        else "metrics.json"
+    )
+    metrics_path = out_dir / metrics_filename
 
     table = evaluate_models(
         models,

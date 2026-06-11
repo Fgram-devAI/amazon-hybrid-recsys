@@ -398,6 +398,50 @@ def test_checkpoint_tag_requires_graph():
         ev.main(["--dataset", "tiny", "--checkpoint-tag", "20ep", "--quiet"])
 
 
+def test_checkpoint_tag_produces_tagged_metrics_filename(monkeypatch, tmp_path):
+    """--checkpoint-tag no_text must write metrics_no_text.json, not metrics.json."""
+    from src.evaluation import evaluate as ev
+
+    def fake_build_models(*args, **kwargs):
+        return {"graphsage_bpr": FixedScore()}
+
+    def fake_evaluate_models(models, *args, **kwargs):
+        return pd.DataFrame([{"model": "graphsage_bpr", "rmse": 0.5, "mae": 0.4}])
+
+    def fake_load_processed(processed_dir, dataset):
+        return (
+            pd.DataFrame(columns=["user_id", "parent_asin", "rating"]),
+            pd.DataFrame(columns=["user_id", "parent_asin", "rating"]),
+            pd.DataFrame(columns=["parent_asin"]),
+        )
+
+    monkeypatch.setattr(ev, "build_models", fake_build_models)
+    monkeypatch.setattr(ev, "evaluate_models", fake_evaluate_models)
+    monkeypatch.setattr(ev, "_load_processed", fake_load_processed)
+    monkeypatch.setattr("src.data.config.load_config", lambda _p: {
+        "processed_dir": str(tmp_path),
+        "models": {"ranking_random_seed": 42},
+        "hybrid": {"alpha": 0.5},
+        "evaluation": {"k": 10},
+        "preprocessing": {"min_rating_relevant": 4.0},
+    })
+    monkeypatch.setattr("src.models.embedding.build_embedder", lambda _c: object())
+
+    ev.main([
+        "--dataset", "tiny",
+        "--graph-only",
+        "--only-model", "graphsage_bpr",
+        "--checkpoint-tag", "no_text",
+        "--quiet",
+    ])
+
+    out_dir = tmp_path / "tiny"
+    assert (out_dir / "metrics_no_text.json").exists(), \
+        "metrics_no_text.json was not written"
+    assert not (out_dir / "metrics.json").exists(), \
+        "metrics.json must not be written when --checkpoint-tag is set"
+
+
 def test_train_only_and_graph_overrides_require_graph():
     import pytest
     from src.evaluation import evaluate as ev
