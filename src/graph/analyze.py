@@ -100,33 +100,58 @@ def run_graph_analysis(
     processed_dir: Path,
     dataset: str,
     config: dict[str, Any],
+    overrides: dict[str, Any] | None = None,
+    output_name: str = "report.json",
 ) -> dict[str, Any]:
     """Run the full read-only analysis pipeline; write a JSON report."""
+    if Path(output_name).name != output_name or not output_name.endswith(".json"):
+        raise ValueError("output_name must be a JSON filename without directories")
+
+    knobs = dict(config["graph_analysis"])
+    if overrides:
+        knobs.update({k: v for k, v in overrides.items() if v is not None})
+
+    _LOG.info("loading train split from %s", processed_dir / "train.parquet")
     train = pd.read_parquet(processed_dir / "train.parquet")
-    knobs = config["graph_analysis"]
+    _LOG.info("building train-only bipartite graph (%d interactions)", len(train))
     bg = build_train_bipartite_graph(train)
+    _LOG.info(
+        "projecting item-item graph (min_shared_users=%s, top_n_items=%s)",
+        knobs["min_shared_users"],
+        knobs.get("top_n_items"),
+    )
     item_graph = project_item_item(
         bg,
         min_shared_users=int(knobs["min_shared_users"]),
         top_n_items=knobs.get("top_n_items"),
     )
+    _LOG.info(
+        "projection built: nodes=%d, edges=%d",
+        item_graph.number_of_nodes(),
+        item_graph.number_of_edges(),
+    )
 
     weight = knobs.get("projection_weight", "weight_jaccard")
     seed = int(knobs.get("random_state", 42))
+    _LOG.info("loading category labels for alignment")
     labels = _load_labels(
         processed_dir,
         generic_roots=config.get("advanced_features", {}).get("generic_category_roots", []),
     )
+    _LOG.info("loaded %d item labels", len(labels))
 
     communities: dict[str, dict[str, Any] | None] = {}
+    _LOG.info("running Louvain community detection")
     communities["louvain"] = _serialize_result(
         run_louvain(item_graph, weight=weight, seed=seed), labels
     )
+    _LOG.info("running Leiden community detection (optional)")
     communities["leiden"] = _serialize_result(
         run_leiden(item_graph, weight=weight, seed=seed), labels
     )
     for k in knobs.get("spectral_k_values", []):
         try:
+            _LOG.info("running spectral clustering (k=%s)", k)
             communities[f"spectral_k={k}"] = _serialize_result(
                 run_spectral(item_graph, k=int(k), weight=weight, random_state=seed),
                 labels,
@@ -136,6 +161,7 @@ def run_graph_analysis(
             communities[f"spectral_k={k}"] = None
 
     try:
+        _LOG.info("running Girvan-Newman small-subgraph baseline")
         communities["girvan_newman"] = _serialize_result(
             run_girvan_newman(
                 item_graph,
@@ -165,7 +191,8 @@ def run_graph_analysis(
 
     out_dir = processed_dir / "graph_analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+    (out_dir / output_name).write_text(json.dumps(report, indent=2))
+    _LOG.info("wrote %s", out_dir / output_name)
     return report
 
 
@@ -178,6 +205,25 @@ def main() -> None:
     parser.add_argument(
         "--config", default="config/config.yaml", help="Path to config YAML."
     )
+    parser.add_argument(
+        "--min-shared-users",
+        type=int,
+        help="Override graph_analysis.min_shared_users for this run.",
+    )
+    parser.add_argument(
+        "--top-n-items",
+        type=int,
+        help="Override graph_analysis.top_n_items for this run.",
+    )
+    parser.add_argument(
+        "--spectral-k-values",
+        help="Comma-separated override for graph_analysis.spectral_k_values, e.g. 10,25,50.",
+    )
+    parser.add_argument(
+        "--output-name",
+        default="report.json",
+        help="JSON filename under data/processed/<dataset>/graph_analysis/.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -187,9 +233,26 @@ def main() -> None:
     if not processed_dir.exists():
         raise SystemExit(f"processed dir not found: {processed_dir}")
 
-    report = run_graph_analysis(processed_dir, dataset, config)
+    spectral_k_values = None
+    if args.spectral_k_values:
+        spectral_k_values = [
+            int(part.strip()) for part in args.spectral_k_values.split(",") if part.strip()
+        ]
+    overrides = {
+        "min_shared_users": args.min_shared_users,
+        "top_n_items": args.top_n_items,
+        "spectral_k_values": spectral_k_values,
+    }
+    report = run_graph_analysis(
+        processed_dir,
+        dataset,
+        config,
+        overrides=overrides,
+        output_name=args.output_name,
+    )
     _LOG.info(
-        "wrote graph_analysis/report.json (%d items, %d edges)",
+        "completed graph analysis: output=%s (%d items, %d edges)",
+        args.output_name,
         report["projection_eda"]["n_nodes"],
         report["projection_eda"]["n_edges"],
     )

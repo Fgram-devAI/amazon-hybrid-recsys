@@ -316,13 +316,29 @@ Silicon because PyG operator coverage can vary.
 ## Graph EDA + Community Analysis (feat/graph-eda-community, Spec 2)
 
 A read-only analysis of the train-only user-item graph and its item-item
-co-rating projection. Produces a single JSON report plus optional figures
-under `data/processed/<dataset>/graph_analysis/` (gitignored).
+co-rating projection. Produces JSON reports under
+`data/processed/<dataset>/graph_analysis/` (gitignored).
 
-Run:
+Smoke run:
 
 ```bash
-./.venv/bin/python -m src.graph.analyze --dataset video_games
+./.venv/bin/python -m src.graph.analyze \
+  --dataset video_games \
+  --min-shared-users 20 \
+  --top-n-items 2000 \
+  --spectral-k-values 10,25 \
+  --output-name report_min20_top2000.json
+```
+
+Main bounded run:
+
+```bash
+./.venv/bin/python -m src.graph.analyze \
+  --dataset video_games \
+  --min-shared-users 10 \
+  --top-n-items 5000 \
+  --spectral-k-values 10,25,50 \
+  --output-name report_min10_top5000.json
 ```
 
 What it computes:

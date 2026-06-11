@@ -81,3 +81,34 @@ def test_orchestrator_writes_report_with_expected_keys(tmp_dataset: Path) -> Non
     assert louvain["n_communities"] == 2
     assert "alignment" in louvain
     assert louvain["alignment"]["purity"] == pytest.approx(1.0)
+
+
+def test_orchestrator_supports_overrides_and_custom_output(tmp_dataset: Path) -> None:
+    config = {
+        "graph_analysis": {
+            "min_shared_users": 99,
+            "projection_weight": "weight_jaccard",
+            "top_n_items": None,
+            "spectral_k_values": [99],
+            "girvan_newman_max_nodes": 500,
+            "random_state": 42,
+        }
+    }
+    report = run_graph_analysis(
+        processed_dir=tmp_dataset,
+        dataset="toy",
+        config=config,
+        overrides={
+            "min_shared_users": 2,
+            "top_n_items": 4,
+            "spectral_k_values": [2],
+        },
+        output_name="report_min2_top4.json",
+    )
+
+    out_path = tmp_dataset / "graph_analysis" / "report_min2_top4.json"
+    assert out_path.exists()
+    assert report["graph_analysis_config"]["min_shared_users"] == 2
+    assert report["graph_analysis_config"]["top_n_items"] == 4
+    assert report["graph_analysis_config"]["spectral_k_values"] == [2]
+    assert report["projection_eda"]["n_nodes"] == 4
