@@ -195,3 +195,130 @@ def test_structure_only_log_degree_is_log1p_count():
     # First column is the log-degree (log1p of train interaction count).
     assert features[0, 0] == np.float32(np.log1p(2.0))
     assert features[1, 0] == np.float32(np.log1p(1.0))
+
+
+def test_no_sentiment_does_not_read_item_aggregates(tmp_path, monkeypatch):
+    """`use_item_sentiment=False` must NOT call pd.read_parquet on the aggregates path."""
+    aggregates = tmp_path / "item_review_aggregates.parquet"
+    pd.DataFrame(
+        {
+            "parent_asin": ["i1", "i2", "i3"],
+            "item_train_sentiment_mean": [0.1, 0.2, 0.3],
+            "item_rating_minus_sentiment_gap": [0.0, 0.1, -0.1],
+        }
+    ).to_parquet(aggregates)
+
+    forbidden_reads: list[str] = []
+    real_read_parquet = pd.read_parquet
+
+    def guarded(path, *args, **kwargs):
+        if str(aggregates) in str(path):
+            forbidden_reads.append(str(path))
+        return real_read_parquet(path, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", guarded)
+
+    # Sentiment OFF: must NOT read the item aggregates parquet.
+    build_item_node_features(
+        _toy_metadata(),
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        cache_dir=None,
+        review_features_dir=tmp_path,
+        use_item_sentiment=False,
+    )
+    assert forbidden_reads == [], (
+        f"use_item_sentiment=False must not read aggregates, got: {forbidden_reads}"
+    )
+
+    # Sentiment ON: MUST read the item aggregates parquet (sanity check).
+    build_item_node_features(
+        _toy_metadata(),
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        cache_dir=None,
+        review_features_dir=tmp_path,
+        use_item_sentiment=True,
+    )
+    assert any(str(aggregates) in p for p in forbidden_reads), (
+        "use_item_sentiment=True should read the item aggregates parquet"
+    )
+
+
+def test_no_generosity_offset_does_not_read_user_aggregates(tmp_path, monkeypatch):
+    """`use_generosity_offset=False` must NOT call pd.read_parquet on user aggregates."""
+    aggregates = tmp_path / "user_review_aggregates.parquet"
+    pd.DataFrame(
+        {
+            "user_id": ["u1", "u2", "u3"],
+            "user_rating_minus_sentiment_gap": [0.1, -0.2, 0.0],
+        }
+    ).to_parquet(aggregates)
+
+    forbidden_reads: list[str] = []
+    real_read_parquet = pd.read_parquet
+
+    def guarded(path, *args, **kwargs):
+        if str(aggregates) in str(path):
+            forbidden_reads.append(str(path))
+        return real_read_parquet(path, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", guarded)
+
+    build_user_node_features(
+        _toy_train(),
+        user_ids=["u1", "u2", "u3"],
+        review_features_dir=tmp_path,
+        use_generosity_offset=False,
+    )
+    assert forbidden_reads == [], (
+        f"use_generosity_offset=False must not read user aggregates, got: {forbidden_reads}"
+    )
+
+    build_user_node_features(
+        _toy_train(),
+        user_ids=["u1", "u2", "u3"],
+        review_features_dir=tmp_path,
+        use_generosity_offset=True,
+    )
+    assert any(str(aggregates) in p for p in forbidden_reads), (
+        "use_generosity_offset=True should read the user aggregates parquet"
+    )
+
+
+def test_no_sentiment_drops_two_item_aggregate_columns(tmp_path):
+    """When aggregate parquet exists, no_sentiment must remove the 2 sentiment columns."""
+    pd.DataFrame(
+        {
+            "parent_asin": ["i1", "i2", "i3", "i4"],
+            "item_train_sentiment_mean": [0.1, 0.2, 0.3, 0.4],
+            "item_rating_minus_sentiment_gap": [0.0, 0.1, -0.1, 0.2],
+        }
+    ).to_parquet(tmp_path / "item_review_aggregates.parquet")
+
+    full_features, _ = build_item_node_features(
+        _toy_metadata(),
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        cache_dir=None,
+        review_features_dir=tmp_path,
+        use_item_sentiment=True,
+    )
+    no_sent_features, _ = build_item_node_features(
+        _toy_metadata(),
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        cache_dir=None,
+        review_features_dir=tmp_path,
+        use_item_sentiment=False,
+    )
+
+    assert no_sent_features.shape[1] == full_features.shape[1] - 2
