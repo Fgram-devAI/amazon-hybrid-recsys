@@ -272,3 +272,46 @@ def run_girvan_newman(
         modularity=_modularity(item_graph, communities, weight),
         extras={"max_nodes": max_nodes, "n_nodes_used": n},
     )
+
+
+def run_leiden(
+    item_graph: nx.Graph,
+    weight: str = "weight_jaccard",
+    seed: int = 42,
+) -> CommunityResult | None:
+    """Leiden community detection if ``leidenalg`` + ``igraph`` are installed.
+
+    Returns ``None`` and logs a warning when the optional dependencies are
+    missing — the rest of the analysis pipeline still runs (Louvain +
+    Spectral are required and always available).
+    """
+    try:
+        import igraph as ig  # pyright: ignore[reportMissingImports]
+        import leidenalg  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        _LOG.warning(
+            "leidenalg / python-igraph not installed; skipping Leiden. "
+            "Install with: pip install leidenalg python-igraph"
+        )
+        return None
+
+    ig_graph = ig.Graph.from_networkx(item_graph)
+    # NetworkX edge attribute names survive the conversion; map by name.
+    weights = [float(item_graph[u][v].get(weight, 0.0)) for u, v in item_graph.edges()]
+    partition = leidenalg.find_partition(
+        ig_graph,
+        leidenalg.RBConfigurationVertexPartition,
+        weights=weights,
+        seed=seed,
+    )
+    node_names = ig_graph.vs["_nx_name"]
+    communities: list[set[str]] = []
+    for member_indices in partition:
+        communities.append({node_names[i] for i in member_indices})
+
+    return CommunityResult(
+        method="leiden",
+        communities=communities,
+        modularity=_modularity(item_graph, communities, weight),
+        extras={"weight": weight, "seed": seed},
+    )

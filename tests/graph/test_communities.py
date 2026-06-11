@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
+
 import networkx as nx
 import pytest
 
@@ -10,6 +13,7 @@ from src.graph.communities import (
     CommunityResult,
     compute_alignment,
     run_girvan_newman,
+    run_leiden,
     run_louvain,
     run_spectral,
 )
@@ -111,3 +115,38 @@ def test_run_girvan_newman_refuses_subgraph_above_cap() -> None:
     g = nx.path_graph(10)
     with pytest.raises(ValueError, match="exceeds girvan_newman_max_nodes"):
         run_girvan_newman(g, max_nodes=5)
+
+
+def test_run_leiden_returns_none_when_dependency_missing(monkeypatch, caplog) -> None:
+    """Simulate leidenalg being absent and confirm graceful skip."""
+
+    def _block(name: str, *args, **kwargs):
+        if name in {"leidenalg", "igraph"}:
+            raise ImportError(f"{name} is not installed")
+        return importlib.__import__(name, *args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "leidenalg", None)
+    monkeypatch.setitem(sys.modules, "igraph", None)
+    monkeypatch.setattr("builtins.__import__", _block)
+
+    g = nx.complete_graph(["a", "b", "c"])
+    with caplog.at_level("WARNING"):
+        result = run_leiden(g, weight="weight")
+
+    assert result is None
+    assert any("leidenalg" in rec.message.lower() for rec in caplog.records)
+
+
+def test_run_leiden_returns_partition_when_dependency_present(two_clique_train) -> None:
+    pytest.importorskip("leidenalg")
+    pytest.importorskip("igraph")
+
+    bg = build_train_bipartite_graph(two_clique_train)
+    item_graph = project_item_item(bg, min_shared_users=2)
+    result = run_leiden(item_graph, weight="weight_jaccard", seed=42)
+
+    assert result is not None
+    assert result.method == "leiden"
+    flat = [n for c in result.communities for n in c]
+    assert sorted(flat) == sorted(item_graph.nodes())
+    assert len(result.communities) >= 2
