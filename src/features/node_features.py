@@ -183,3 +183,33 @@ def build_user_node_features(
         else:
             rows.append([0.0, 0.0, 0.0, 0.0] if use_generosity_offset else [0.0, 0.0, 0.0])
     return np.asarray(rows, dtype=np.float32), list(user_ids)
+
+
+def _structure_only_item_features(
+    item_ids: list[str],
+    train: pd.DataFrame,
+) -> np.ndarray:
+    """Three train-structural columns per item: log-degree, mean rating, positive ratio.
+
+    No text, no categories, no numeric metadata, no sentiment, no graph object.
+    Cold items (not in ``train``) get a zero row.
+    """
+    grouped = train.groupby("parent_asin")
+    degree = grouped["rating"].count().astype(float)
+    mean_rating = grouped["rating"].mean()
+    positive_ratio = (
+        train.assign(_pos=(train["rating"] >= 4.0).astype(float))
+        .groupby("parent_asin")["_pos"].mean()
+    )
+
+    rows = []
+    for iid in item_ids:
+        if iid in degree.index:
+            rows.append([
+                float(np.log1p(float(degree[iid]))),
+                float(mean_rating[iid]),
+                float(positive_ratio.get(iid, 0.0)),
+            ])
+        else:
+            rows.append([0.0, 0.0, 0.0])
+    return np.asarray(rows, dtype=np.float32)

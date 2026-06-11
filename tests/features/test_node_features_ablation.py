@@ -18,6 +18,7 @@ import pandas as pd
 from src.features.node_features import (
     build_item_node_features,
     build_user_node_features,
+    _structure_only_item_features,
 )
 
 
@@ -162,3 +163,35 @@ def test_metadata_only_drops_text_and_sentiment():
     full_features, _ = _build_items(True, True, True, True)
     meta_features, _ = _build_items(False, True, True, False)
     assert meta_features.shape[1] == full_features.shape[1] - TEXT_DIM - SENTIMENT_DIM
+
+
+def test_structure_only_returns_3_columns():
+    """Three train-structural columns: [log_degree, mean_rating, positive_ratio]."""
+    train = _toy_train()
+    item_ids = ["i1", "i2", "i3", "i4"]
+
+    features = _structure_only_item_features(item_ids, train)
+
+    assert features.shape == (4, 3)
+    assert features.dtype == np.float32
+
+
+def test_structure_only_cold_items_get_zero_row():
+    train = _toy_train()
+    item_ids = ["i1", "i_cold"]  # i_cold not in train
+
+    features = _structure_only_item_features(item_ids, train)
+
+    assert features.shape == (2, 3)
+    assert np.allclose(features[1], 0.0)
+
+
+def test_structure_only_log_degree_is_log1p_count():
+    train = _toy_train()
+    item_ids = ["i1", "i2"]  # i1 has 2 interactions, i2 has 1
+
+    features = _structure_only_item_features(item_ids, train)
+
+    # First column is the log-degree (log1p of train interaction count).
+    assert features[0, 0] == np.float32(np.log1p(2.0))
+    assert features[1, 0] == np.float32(np.log1p(1.0))
