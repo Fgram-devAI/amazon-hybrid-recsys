@@ -1,8 +1,9 @@
 """Train-only bipartite graph: index maps, propagation/label split, two views."""
 
+import networkx as nx
 import pandas as pd
 
-from src.graph.build import build_graph
+from src.graph.build import BipartiteTrainGraph, build_graph, build_train_bipartite_graph
 
 
 def _toy_train() -> pd.DataFrame:
@@ -79,3 +80,66 @@ def test_build_graph_ignores_test_dataframe_even_if_caller_passes_it():
     assert all(u != graph.user_index.get("u4", -1) for u in edge_users)
     # 'i3' may exist (it's in train via u2's rating=2.0) but that's a train fact, not test
     _ = test  # explicitly unused
+
+
+# NOTE: the test cases below are appended in Task 2 of feat/graph-eda-community.
+
+def _toy_eda_train() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"user_id": "u1", "parent_asin": "i1", "rating": 5.0, "timestamp": 1},
+            {"user_id": "u1", "parent_asin": "i2", "rating": 4.0, "timestamp": 2},
+            {"user_id": "u2", "parent_asin": "i1", "rating": 3.0, "timestamp": 3},
+            {"user_id": "u2", "parent_asin": "i3", "rating": 5.0, "timestamp": 4},
+            {"user_id": "u3", "parent_asin": "i2", "rating": 2.0, "timestamp": 5},
+        ]
+    )
+
+
+def test_build_train_graph_returns_bipartite_graph_with_index_maps() -> None:
+    result = build_train_bipartite_graph(_toy_eda_train())
+
+    assert isinstance(result, BipartiteTrainGraph)
+    assert isinstance(result.graph, nx.Graph)
+    assert set(result.user_to_idx) == {"u1", "u2", "u3"}
+    assert set(result.item_to_idx) == {"i1", "i2", "i3"}
+    assert sorted(result.user_to_idx.values()) == [0, 1, 2]
+    assert sorted(result.item_to_idx.values()) == [0, 1, 2]
+    for user, idx in result.user_to_idx.items():
+        assert result.idx_to_user[idx] == user
+    for item, idx in result.item_to_idx.items():
+        assert result.idx_to_item[idx] == item
+
+
+def test_build_train_graph_edges_match_train_rows_with_rating_attribute() -> None:
+    result = build_train_bipartite_graph(_toy_eda_train())
+    g = result.graph
+    assert g.number_of_edges() == 5
+    assert g["u1"]["i1"]["rating"] == 5.0
+    assert g["u3"]["i2"]["rating"] == 2.0
+    assert g.nodes["u1"]["bipartite"] == 0
+    assert g.nodes["i1"]["bipartite"] == 1
+
+
+def test_build_train_graph_ignores_any_test_dataframe_completely() -> None:
+    """Sanity: passing only the train frame must not pull in test edges."""
+    train = _toy_eda_train()
+    test_only = pd.DataFrame(
+        [{"user_id": "u_test", "parent_asin": "i_test", "rating": 5.0, "timestamp": 99}]
+    )
+    result = build_train_bipartite_graph(train)
+    assert "u_test" not in result.user_to_idx
+    assert "i_test" not in result.item_to_idx
+    assert len(test_only) == 1
+
+
+def test_build_train_graph_deduplicates_repeated_user_item_pairs() -> None:
+    repeated = pd.DataFrame(
+        [
+            {"user_id": "u1", "parent_asin": "i1", "rating": 4.0, "timestamp": 1},
+            {"user_id": "u1", "parent_asin": "i1", "rating": 5.0, "timestamp": 2},
+        ]
+    )
+    result = build_train_bipartite_graph(repeated)
+    assert result.graph.number_of_edges() == 1
+    assert result.graph["u1"]["i1"]["rating"] == 5.0
