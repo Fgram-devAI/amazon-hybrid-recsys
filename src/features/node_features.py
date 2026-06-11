@@ -80,33 +80,55 @@ def build_item_node_features(
     min_doc_freq: int,
     cache_dir: Path | None,
     review_features_dir: Path | None,
+    use_text: bool = True,
+    use_categories: bool = True,
+    use_numeric: bool = True,
     use_item_sentiment: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
-    """Build the item node-feature matrix. Returns (features, ids) aligned by row."""
+    """Build the item node-feature matrix. Returns (features, ids) aligned by row.
+
+    Feature-group flags remove (not zero) the corresponding columns. Defaults
+    preserve today's behavior so ContentEnriched and GraphSAGE-MSE call sites
+    are unaffected.
+    """
     meta_df = metadata.drop_duplicates(subset=["parent_asin"], keep="last").reset_index(drop=True)
 
     emb_df = meta_df.assign(text=_embed_text(meta_df))
-    if cache_dir is not None:
-        content_hash = content_hash_for(emb_df, embedder.name)
-        text_emb, ids = load_or_compute_item_embeddings(
-            emb_df, embedder, Path(cache_dir), content_hash,
-        )
+    if use_text:
+        if cache_dir is not None:
+            content_hash = content_hash_for(emb_df, embedder.name)
+            text_emb, ids = load_or_compute_item_embeddings(
+                emb_df, embedder, Path(cache_dir), content_hash,
+            )
+        else:
+            ids = meta_df["parent_asin"].tolist()
+            text_emb = np.asarray(embedder.encode(emb_df["text"].tolist()), dtype=np.float32)
     else:
+        # Alignment still needs the canonical id order. We skip the embedder
+        # call so the run does NOT pay for text encoding when text is off.
         ids = meta_df["parent_asin"].tolist()
-        text_emb = np.asarray(embedder.encode(emb_df["text"].tolist()), dtype=np.float32)
+        text_emb = np.zeros((len(ids), 0), dtype=np.float32)
 
     meta_by_id = meta_df.set_index("parent_asin").loc[ids].reset_index()
 
-    vocab = build_category_vocab(
-        meta_by_id,
-        generic_roots=generic_roots,
-        max_vocab=max_vocab,
-        min_doc_freq=min_doc_freq,
-    )
-    category_feats, _ = build_category_features(
-        meta_by_id, vocab, generic_roots=generic_roots,
-    )
-    numeric = _standardize(meta_by_id[_NUMERIC_COLS].to_numpy(dtype=np.float32))
+    if use_categories:
+        vocab = build_category_vocab(
+            meta_by_id,
+            generic_roots=generic_roots,
+            max_vocab=max_vocab,
+            min_doc_freq=min_doc_freq,
+        )
+        category_feats, _ = build_category_features(
+            meta_by_id, vocab, generic_roots=generic_roots,
+        )
+    else:
+        category_feats = np.zeros((len(ids), 0), dtype=np.float32)
+
+    if use_numeric:
+        numeric = _standardize(meta_by_id[_NUMERIC_COLS].to_numpy(dtype=np.float32))
+    else:
+        numeric = np.zeros((len(ids), 0), dtype=np.float32)
+
     item_sentiment = _item_sentiment_features(ids, review_features_dir, use_item_sentiment)
 
     features = _l2_normalize(
@@ -120,8 +142,13 @@ def build_user_node_features(
     *,
     user_ids: list[str],
     review_features_dir: Path | None,
+    use_generosity_offset: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
-    """Train-only behavioural features per user. Cold users (not in train) get zeros."""
+    """Train-only behavioural features per user. Cold users (not in train) get zeros.
+
+    When ``use_generosity_offset=False`` the user-side sentiment-derived offset
+    column is skipped AND the parquet under ``review_features_dir`` is NOT read.
+    """
     grouped = train.groupby("user_id")
     mean_rating = grouped["rating"].mean()
     count = grouped["rating"].count().astype(float)
@@ -131,7 +158,7 @@ def build_user_node_features(
     )
 
     generosity = pd.Series(dtype=float)
-    if review_features_dir is not None:
+    if use_generosity_offset and review_features_dir is not None:
         path = Path(review_features_dir) / "user_review_aggregates.parquet"
         if path.exists():
             agg = pd.read_parquet(path)
@@ -145,12 +172,14 @@ def build_user_node_features(
     rows = []
     for uid in user_ids:
         if uid in mean_rating.index:
-            rows.append([
+            base = [
                 float(mean_rating[uid]),
                 float(count[uid]),
                 float(positive_ratio.get(uid, 0.0)),
-                float(generosity.get(uid, 0.0)),
-            ])
+            ]
+            if use_generosity_offset:
+                base.append(float(generosity.get(uid, 0.0)))
+            rows.append(base)
         else:
-            rows.append([0.0, 0.0, 0.0, 0.0])
+            rows.append([0.0, 0.0, 0.0, 0.0] if use_generosity_offset else [0.0, 0.0, 0.0])
     return np.asarray(rows, dtype=np.float32), list(user_ids)
