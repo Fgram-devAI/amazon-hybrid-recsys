@@ -35,7 +35,7 @@ from sklearn.metrics import normalized_mutual_info_score
 from src.graph.projection import to_sparse_adjacency
 
 try:
-    import pyamg  # noqa: F401
+    import pyamg  # noqa: F401  # pyright: ignore[reportMissingImports]
 
     _HAS_PYAMG = True
 except ImportError:  # pragma: no cover
