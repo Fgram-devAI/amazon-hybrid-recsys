@@ -40,6 +40,7 @@ class GraphSAGEBPRRecommender(GraphSAGERecommender):
         cache_dir: object = None,
         review_features_dir: object = None,
         validation_fraction: float = 0.1,
+        feature_set: str = "full",
         progress: bool = False,
     ) -> None:
         super().__init__(
@@ -63,6 +64,14 @@ class GraphSAGEBPRRecommender(GraphSAGERecommender):
         self.validation_fraction = float(validation_fraction)
         self._calibration_beta: float | None = None
         self._calibration_intercept: float | None = None
+        valid_feature_sets = {
+            "full", "no_text", "no_sentiment", "metadata_only", "structure_only",
+        }
+        if feature_set not in valid_feature_sets:
+            raise ValueError(
+                f"feature_set must be one of {sorted(valid_feature_sets)}, got {feature_set!r}"
+            )
+        self.feature_set = feature_set
 
     def fit(self, train: pd.DataFrame, metadata: object = None) -> "GraphSAGEBPRRecommender":
         train_only, val = split_validation(
@@ -97,6 +106,134 @@ class GraphSAGEBPRRecommender(GraphSAGERecommender):
         self._model = self._train_bpr(self._graph, edge_index, self._model)
         self.cache_final_embeddings(edge_index)
         return self
+
+    def _prepare_state(
+        self,
+        train: pd.DataFrame,
+        metadata: object = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if metadata is None:
+            raise ValueError("GraphSAGEBPRRecommender.fit requires metadata")
+        if self.feature_set == "full":
+            return super()._prepare_state(train, metadata)
+        meta_df: pd.DataFrame = metadata  # type: ignore[assignment]
+        return self._prepare_state_for_ablation(train, meta_df)
+
+    def _prepare_state_for_ablation(
+        self,
+        train: pd.DataFrame,
+        metadata: pd.DataFrame,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        from pathlib import Path
+
+        from src.features.node_features import (
+            _structure_only_item_features,
+            build_item_node_features,
+            build_user_node_features,
+        )
+        from src.graph.build import build_graph
+
+        torch.manual_seed(self.seed)
+        np.random.seed(self.seed)
+        self._fit_means(train)
+        if self.progress:
+            print(
+                f"[graphsage_bpr] fit start: rows={len(train):,}, device={self.device}, "
+                f"epochs={self.epochs}, hidden_dim={self.hidden_dim}, layers={self.n_layers}, "
+                f"feature_set={self.feature_set!r}",
+                flush=True,
+            )
+
+        self._graph = build_graph(train, min_rating_positive=4.0)
+        if self.progress:
+            print(
+                f"[graphsage_bpr] graph: users={len(self._graph.user_index):,}, "
+                f"items={len(self._graph.item_index):,}, "
+                f"observed_edges={self._graph.edge_label_index.shape[1]:,}",
+                flush=True,
+            )
+
+        item_ids_in_graph = list(self._graph.item_index.keys())
+        meta_filtered = metadata[metadata["parent_asin"].isin(item_ids_in_graph)].copy()
+
+        if self.feature_set == "structure_only":
+            item_feats = _structure_only_item_features(item_ids_in_graph, train)
+            item_ids = item_ids_in_graph
+            use_generosity_offset = False
+        else:
+            use_text = self.feature_set != "no_text" and self.feature_set != "metadata_only"
+            use_categories = True
+            use_numeric = True
+            use_item_sentiment = self.feature_set not in {"no_sentiment", "metadata_only"}
+            use_generosity_offset = self.feature_set not in {"no_sentiment", "metadata_only"}
+
+            if self.progress:
+                print(
+                    f"[graphsage_bpr] building item features: metadata_items={len(meta_filtered):,}, "
+                    f"cache_dir={self.cache_dir}",
+                    flush=True,
+                )
+
+            item_feats, item_ids = build_item_node_features(
+                meta_filtered,
+                embedder=self.embedder,  # type: ignore[arg-type]
+                generic_roots=self.generic_roots,
+                max_vocab=self.max_vocab,
+                min_doc_freq=self.min_doc_freq,
+                cache_dir=Path(str(self.cache_dir)) if self.cache_dir is not None else None,
+                review_features_dir=Path(str(self.review_features_dir))
+                    if self.review_features_dir is not None else None,
+                use_text=use_text,
+                use_categories=use_categories,
+                use_numeric=use_numeric,
+                use_item_sentiment=use_item_sentiment,
+            )
+
+        if self.progress:
+            print(
+                f"[graphsage_bpr] item features: shape={item_feats.shape}, "
+                f"aligned_items={len(item_ids):,}",
+                flush=True,
+            )
+
+        item_pos = {iid: pos for pos, iid in enumerate(item_ids)}
+        item_order = np.asarray(
+            [item_pos[iid] for iid in self._graph.item_index.keys()
+             if iid in item_pos],
+            dtype=np.int64,
+        )
+        item_feats = item_feats[item_order]
+        item_dim = item_feats.shape[1]
+
+        user_ids = list(self._graph.user_index.keys())
+        user_feats, _ = build_user_node_features(
+            train,
+            user_ids=user_ids,
+            review_features_dir=Path(str(self.review_features_dir))
+                if self.review_features_dir is not None else None,
+            use_generosity_offset=use_generosity_offset,
+        )
+        if self.progress:
+            print(f"[graphsage_bpr] user features: shape={user_feats.shape}", flush=True)
+
+        if user_feats.shape[1] < item_dim:
+            pad = np.zeros((user_feats.shape[0], item_dim - user_feats.shape[1]), dtype=np.float32)
+            user_feats = np.hstack([user_feats, pad])
+        elif user_feats.shape[1] > item_dim:
+            user_feats = user_feats[:, :item_dim]
+
+        x = np.vstack([user_feats, item_feats]).astype(np.float32)
+        self._x = torch.from_numpy(x).to(self.device)
+        if self.progress:
+            print(f"[graphsage_bpr] node feature matrix: shape={self._x.shape}", flush=True)
+
+        from src.models.graphsage import _SAGEEdgeModel
+        self._model = _SAGEEdgeModel(item_dim, self.hidden_dim, self.n_layers).to(self.device)
+        return (
+            self._graph.propagation_edge_index.to(self.device),
+            self._graph.edge_label_index.to(self.device),
+            self._graph.edge_label_rating.to(self.device),
+        )
 
     def _train_bpr(
         self,

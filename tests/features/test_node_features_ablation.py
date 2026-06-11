@@ -322,3 +322,53 @@ def test_no_sentiment_drops_two_item_aggregate_columns(tmp_path):
     )
 
     assert no_sent_features.shape[1] == full_features.shape[1] - 2
+
+
+def test_graphsage_bpr_rejects_unknown_feature_set():
+    """Constructor validation should reject unknown feature_set values."""
+    import pytest
+
+    from src.models.graphsage_bpr import GraphSAGEBPRRecommender
+
+    with pytest.raises(ValueError, match="feature_set must be one of"):
+        GraphSAGEBPRRecommender(
+            embedder=_FakeEmbedder(),
+            generic_roots=["Movies & TV"],
+            max_vocab=8,
+            min_doc_freq=1,
+            feature_set="not_a_real_set",
+        )
+
+
+def test_graphsage_bpr_metadata_only_wires_smaller_feature_matrix():
+    """A non-full feature_set must reach GraphSAGE-BPR's prepared node matrix."""
+    from src.models.graphsage_bpr import GraphSAGEBPRRecommender
+
+    train = _toy_train()
+    meta = _toy_metadata()
+
+    full = GraphSAGEBPRRecommender(
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        feature_set="full",
+        epochs=1,
+        batch_size=4,
+        progress=False,
+    ).prepare_for_checkpoint(train, meta)
+    metadata_only = GraphSAGEBPRRecommender(
+        embedder=_FakeEmbedder(),
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        feature_set="metadata_only",
+        epochs=1,
+        batch_size=4,
+        progress=False,
+    ).prepare_for_checkpoint(train, meta)
+
+    assert full._x is not None
+    assert metadata_only._x is not None
+    assert metadata_only._x.shape[0] == full._x.shape[0]
+    assert metadata_only._x.shape[1] < full._x.shape[1]
