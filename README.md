@@ -388,7 +388,10 @@ community method here; fixed-k spectral clustering is weaker on category
 alignment. Girvan-Newman is intentionally skipped on these full projections
 because it is only tractable for small subgraphs (`girvan_newman_max_nodes=500`);
 the report keeps the illustrative capped Louvain-community run separately as
-`girvan_newman_louvain_subgraph`.
+`girvan_newman_louvain_subgraph`. On the full Video_Games projection, that capped
+run produced a degenerate 499/1 split with near-zero modularity and near-zero
+NMI, so it is reported only as an illustrative baseline rather than a useful
+community method for this graph.
 
 Optional methods (not required to grade):
 
