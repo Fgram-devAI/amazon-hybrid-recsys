@@ -313,6 +313,51 @@ pulls ~2 GB). PyG 2.6 needs no separate `torch-scatter` / `torch-sparse`. Graph
 device selection follows `cuda -> mps -> cpu`; MPS is opportunistic on Apple
 Silicon because PyG operator coverage can vary.
 
+## Graph EDA + Community Analysis (feat/graph-eda-community, Spec 2)
+
+A read-only analysis of the train-only user-item graph and its item-item
+co-rating projection. Produces a single JSON report plus optional figures
+under `data/processed/<dataset>/graph_analysis/` (gitignored).
+
+Run:
+
+```bash
+./.venv/bin/python -m src.graph.analyze --dataset video_games
+```
+
+What it computes:
+
+- Structural EDA on the bipartite and item-item graphs (degrees,
+  density, connected components, mean clustering coefficient, weight
+  distributions for both `weight_count` and `weight_jaccard`).
+- Community detection on the item-item projection (default weight =
+  `weight_jaccard`): **Louvain** (NetworkX built-in), **Leiden**
+  (optional — skipped with a warning when `leidenalg` / `python-igraph`
+  is not installed), **Spectral clustering** (scikit-learn, sparse
+  precomputed Jaccard affinity, restricted to the largest connected
+  component) across the `spectral_k_values` configured in
+  `graph_analysis`, and **Girvan-Newman** as a small-subgraph
+  illustrative baseline (refuses inputs above
+  `girvan_newman_max_nodes`).
+- Category-alignment vs filtered category labels derived from
+  `metadata.parquet` using the configured generic-root filtering convention:
+  purity + normalized mutual information per community method. If labels cannot
+  be derived, alignment is skipped cleanly.
+
+Optional methods (not required to grade):
+
+```bash
+pip install leidenalg python-igraph pyamg
+```
+
+- `leidenalg` + `python-igraph`: enables Leiden (stronger modularity
+  refinement than Louvain).
+- `pyamg`: enables `eigen_solver='amg'` for `SpectralClustering` on
+  large sparse graphs; without it, spectral falls back to `arpack`.
+
+Leakage rule (inherited): the graph and all analysis read TRAIN
+interactions only; this module never feeds back into any model feature.
+
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
