@@ -341,6 +341,16 @@ Main bounded run:
   --output-name report_min10_top5000.json
 ```
 
+Full Video_Games projection run:
+
+```bash
+./.venv/bin/python -m src.graph.analyze \
+  --dataset video_games \
+  --min-shared-users 3 \
+  --spectral-k-values 50 \
+  --output-name report_min3_full.json
+```
+
 What it computes:
 
 - Structural EDA on the bipartite and item-item graphs (degrees,
@@ -359,6 +369,23 @@ What it computes:
   `metadata.parquet` using the configured generic-root filtering convention:
   purity + normalized mutual information per community method. If labels cannot
   be derived, alignment is skipped cleanly.
+
+Video_Games graph-analysis summary:
+
+| Projection | Items | Edges | Largest CC | Louvain modularity | Louvain purity | Louvain NMI | Spectral k=50 NMI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| min20 / top2000 | 2,000 | 2,611 | 572 | 0.757 | 0.784 | 0.681 | n/a |
+| min10 / top5000 | 5,000 | 12,349 | 1,797 | 0.779 | 0.738 | 0.637 | 0.496 |
+| min5 / top10000 | 10,000 | 51,477 | 4,755 | 0.744 | 0.663 | 0.603 | 0.325 |
+| min3 / top15000 | 15,000 | 156,541 | 9,800 | 0.698 | 0.534 | 0.550 | 0.184 |
+| min3 / full | 25,560 | 157,941 | 10,612 | 0.716 | 0.706 | 0.580 | 0.162 |
+
+The projection tradeoff is intentional: stricter co-rating thresholds give
+smaller but cleaner communities, while broader/full projections improve catalog
+coverage and expose the long-tail fragmentation. Louvain is the most stable
+community method here; fixed-k spectral clustering is weaker on category
+alignment. Girvan-Newman is intentionally skipped on these full projections
+because it is only tractable for small subgraphs (`girvan_newman_max_nodes=500`).
 
 Optional methods (not required to grade):
 
