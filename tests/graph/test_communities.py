@@ -9,7 +9,9 @@ from src.graph.build import build_train_bipartite_graph
 from src.graph.communities import (
     CommunityResult,
     compute_alignment,
+    run_girvan_newman,
     run_louvain,
+    run_spectral,
 )
 from src.graph.projection import project_item_item
 
@@ -63,3 +65,49 @@ def test_compute_alignment_low_for_random_partition() -> None:
     # Partition crosses the label boundary -> NMI is 0.
     assert align["purity"] == pytest.approx(0.5)
     assert align["nmi"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_run_spectral_recovers_planted_communities(two_clique_train) -> None:
+    bg = build_train_bipartite_graph(two_clique_train)
+    # Use min_shared_users=1 to include the bridge edge so both clusters are connected
+    item_graph = project_item_item(bg, min_shared_users=1)
+    result = run_spectral(item_graph, k=2, weight="weight_jaccard", random_state=42)
+
+    assert result.method == "spectral_k=2"
+    flat = [n for c in result.communities for n in c]
+    # With the bridge edge, both clusters are in one connected component.
+    assert sorted(flat) == sorted(item_graph.nodes())
+    cluster_a = {f"iA{i}" for i in (1, 2, 3)}
+    cluster_b = {f"iB{i}" for i in (1, 2, 3)}
+    assert {frozenset(c) for c in result.communities} == {
+        frozenset(cluster_a),
+        frozenset(cluster_b),
+    }
+
+
+def test_run_girvan_newman_returns_split_on_two_clique_subgraph(
+    two_clique_train,
+) -> None:
+    bg = build_train_bipartite_graph(two_clique_train)
+    # Use min_shared_users=1 to include the bridge edge
+    item_graph = project_item_item(bg, min_shared_users=1)
+    result = run_girvan_newman(item_graph, max_nodes=500)
+
+    assert result.method == "girvan_newman"
+    flat = [n for c in result.communities for n in c]
+    assert sorted(flat) == sorted(item_graph.nodes())
+    assert len(result.communities) >= 2
+    cluster_a = {f"iA{i}" for i in (1, 2, 3)}
+    cluster_b = {f"iB{i}" for i in (1, 2, 3)}
+    # The bridge edge is the first to break -> first split returns the planted
+    # cliques exactly.
+    assert {frozenset(c) for c in result.communities[:2]} == {
+        frozenset(cluster_a),
+        frozenset(cluster_b),
+    }
+
+
+def test_run_girvan_newman_refuses_subgraph_above_cap() -> None:
+    g = nx.path_graph(10)
+    with pytest.raises(ValueError, match="exceeds girvan_newman_max_nodes"):
+        run_girvan_newman(g, max_nodes=5)

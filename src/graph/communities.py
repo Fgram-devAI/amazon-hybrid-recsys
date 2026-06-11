@@ -23,11 +23,23 @@ import logging
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any
 
 import networkx as nx
 import numpy as np
+import scipy.sparse as sp
+from sklearn.cluster import SpectralClustering
 from sklearn.metrics import normalized_mutual_info_score
+
+from src.graph.projection import to_sparse_adjacency
+
+try:
+    import pyamg  # noqa: F401
+
+    _HAS_PYAMG = True
+except ImportError:  # pragma: no cover
+    _HAS_PYAMG = False
 
 _LOG = logging.getLogger(__name__)
 
@@ -142,3 +154,121 @@ def compute_alignment(
         nmi = 0.0
 
     return {"purity": float(purity), "nmi": nmi, "n_labeled_items": total}
+
+
+def _largest_component_subgraph(item_graph: nx.Graph) -> tuple[nx.Graph, list[str]]:
+    """Extract the largest connected component as a subgraph.
+
+    Returns (subgraph, node_list).
+    """
+    if item_graph.number_of_nodes() == 0:
+        return item_graph, []
+    components = list(nx.connected_components(item_graph))
+    largest = max(components, key=len)
+    sub = item_graph.subgraph(largest).copy()
+    return sub, list(sub.nodes())
+
+
+def run_spectral(
+    item_graph: nx.Graph,
+    k: int,
+    weight: str = "weight_jaccard",
+    random_state: int = 42,
+) -> CommunityResult:
+    """Spectral clustering on the largest connected component.
+
+    Uses scikit-learn ``SpectralClustering`` with a sparse precomputed
+    affinity (Jaccard adjacency). Prefers ``eigen_solver='amg'`` when
+    ``pyamg`` is installed (faster + more stable on big sparse graphs);
+    falls back to ``'arpack'`` otherwise.
+
+    Args:
+        item_graph: Weighted undirected graph (e.g. from project_item_item).
+        k: Number of clusters to find (>= 2).
+        weight: Edge attribute to use (default 'weight_jaccard').
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        CommunityResult with communities as sets of item node IDs.
+
+    Raises:
+        ValueError: If k < 2 or largest component has fewer than k nodes.
+    """
+    if k < 2:
+        raise ValueError("k must be >= 2 for spectral clustering")
+    sub, nodes = _largest_component_subgraph(item_graph)
+    if len(nodes) < k:
+        raise ValueError(
+            f"largest component has {len(nodes)} nodes, less than k={k}"
+        )
+    adj, idx_to_item = to_sparse_adjacency(sub, weight=weight)
+    eigen_solver = "amg" if _HAS_PYAMG else "arpack"
+    model = SpectralClustering(
+        n_clusters=k,
+        affinity="precomputed",
+        eigen_solver=eigen_solver,
+        assign_labels="cluster_qr",
+        random_state=random_state,
+    )
+    labels = model.fit_predict(sp.csr_matrix(adj))
+
+    communities_dict: dict[int, set[str]] = {}
+    for node, label in zip(idx_to_item, labels):
+        communities_dict.setdefault(int(label), set()).add(node)
+    communities = list(communities_dict.values())
+
+    return CommunityResult(
+        method=f"spectral_k={k}",
+        communities=communities,
+        modularity=_modularity(sub, communities, weight),
+        extras={
+            "k": k,
+            "weight": weight,
+            "eigen_solver": eigen_solver,
+            "n_nodes_used": len(nodes),
+            "random_state": random_state,
+        },
+    )
+
+
+def run_girvan_newman(
+    item_graph: nx.Graph,
+    max_nodes: int = 500,
+    weight: str = "weight_jaccard",
+) -> CommunityResult:
+    """Illustrative Girvan-Newman on a tractable subgraph.
+
+    Refuses to run when the input exceeds ``max_nodes`` — Girvan-Newman is
+    O(m * n^2) and is documented as a small-scale comparison only. The
+    caller is expected to pre-restrict to a top-degree subgraph or a single
+    large community.
+
+    Args:
+        item_graph: Weighted undirected graph (e.g. from project_item_item).
+        max_nodes: Maximum allowed number of nodes; raises ValueError if exceeded.
+        weight: Edge attribute to use (default 'weight_jaccard').
+
+    Returns:
+        CommunityResult with communities as sets of item node IDs (first split).
+
+    Raises:
+        ValueError: If item_graph has more than max_nodes nodes.
+    """
+    n = item_graph.number_of_nodes()
+    if n > max_nodes:
+        raise ValueError(
+            f"input has {n} nodes, exceeds girvan_newman_max_nodes={max_nodes}"
+        )
+    iterator = nx.community.girvan_newman(item_graph)
+    # Take the first split (the most informative on small inputs).
+    first_split = next(islice(iterator, 1), None)
+    if first_split is None:
+        communities = [set(item_graph.nodes())]
+    else:
+        communities = [set(c) for c in first_split]
+    return CommunityResult(
+        method="girvan_newman",
+        communities=communities,
+        modularity=_modularity(item_graph, communities, weight),
+        extras={"max_nodes": max_nodes, "n_nodes_used": n},
+    )
