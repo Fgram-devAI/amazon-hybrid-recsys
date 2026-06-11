@@ -47,7 +47,9 @@ def test_enriched_features_include_category_columns():
     # text(8) + categories(<=2: Comedy/Drama) + numeric(3) = >=13 columns
     assert model.features_ is not None
     assert model.features_.shape[1] >= 8 + 2 + 3
-    assert sorted(model.category_vocab_) == ["Comedy", "Drama"]
+    # category_vocab_ is now owned by node_features.build_item_node_features;
+    # this model keeps the attribute as an empty list for backwards-compat.
+    assert model.category_vocab_ == []
 
 
 def test_unknown_user_falls_back_cleanly():
@@ -188,6 +190,41 @@ def test_no_sentiment_variant_does_not_open_aggregate_files(tmp_path, monkeypatc
     # If the flags were ignored, reading the corrupt parquet above would have raised.
     assert model.features_ is not None
     assert model.user_offset_ == {}
+
+
+def test_content_enriched_features_match_pre_refactor_shape_and_norm():
+    """After delegating item-feature build to node_features, behaviour must not change."""
+    import numpy as np
+
+    from src.features.node_features import build_item_node_features
+
+    embedder = FakeEmbedder(dim=8)
+    model = ContentEnrichedRecommender(
+        embedder,
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        cache_dir=None,
+        review_features_dir=None,
+        use_item_sentiment=False,
+        use_user_offset=False,
+    ).fit(_TRAIN, _METADATA)
+
+    direct_features, direct_ids = build_item_node_features(
+        _METADATA,
+        embedder=embedder,
+        generic_roots=["Movies & TV"],
+        max_vocab=8,
+        min_doc_freq=1,
+        cache_dir=None,
+        review_features_dir=None,
+        use_item_sentiment=False,
+    )
+
+    assert model.features_ is not None
+    assert model.features_.shape == direct_features.shape
+    assert list(model.item_index_.keys()) == direct_ids
+    np.testing.assert_allclose(model.features_, direct_features, atol=1e-6)
 
 
 def test_sentiment_aware_variant_still_consumes_aggregates(tmp_path):

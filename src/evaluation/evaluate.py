@@ -53,8 +53,36 @@ def sample_negatives(all_items, exclude, n, rng):
 
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
-                    max_test_rows=None, progress=False):
+                    max_test_rows=None, progress=False, checkpoint_dir=None,
+                    metrics_path=None, checkpoint_tag=None, train_only=False):
     """Fit each model and return a metrics DataFrame (one row per model)."""
+    rating_test = test
+    relevant = {}
+    all_items = np.asarray([], dtype=object)
+    user_train_items = {}
+    if not train_only:
+        if max_test_rows is not None and len(test) > max_test_rows:
+            rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
+
+        relevant = relevant_items_by_user(test, min_rating_relevant)
+        if max_eval_users is not None and len(relevant) > max_eval_users:
+            rng = np.random.default_rng(seed)
+            users = list(relevant)
+            chosen = rng.choice(len(users), size=max_eval_users, replace=False)
+            relevant = {users[int(idx)]: relevant[users[int(idx)]] for idx in chosen}
+        if progress:
+            print(
+                f"[{dataset}] ranking users: {len(relevant)} "
+                f"(cap={max_eval_users}, negatives/user={num_negatives})",
+                flush=True,
+            )
+
+        all_items = np.asarray(pd.unique(train["parent_asin"]), dtype=object)
+        user_train_items = {
+            user: set(items) for user, items in train.groupby("user_id")["parent_asin"]
+        }
+
+    rows = []
     for name, model in models.items():
         fit_start = perf_counter()
         if progress:
@@ -62,31 +90,22 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
         model.fit(train, metadata)
         if progress:
             print(f"[{dataset}] fitted {name} in {perf_counter() - fit_start:.1f}s", flush=True)
+        checkpoint_path = None
+        if checkpoint_dir is not None and name in {"lightgcn", "graphsage", "graphsage_bpr"}:
+            suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
+            path = Path(checkpoint_dir) / f"{name}{suffix}.pt"
+            model.save_checkpoint(path)
+            checkpoint_path = str(path)
+            if progress:
+                print(f"[{dataset}] checkpointed {name} -> {path}", flush=True)
+        if train_only:
+            rows.append({
+                "dataset": dataset,
+                "model": name,
+                "checkpoint_path": checkpoint_path,
+            })
+            continue
 
-    rating_test = test
-    if max_test_rows is not None and len(test) > max_test_rows:
-        rating_test = test.sample(n=max_test_rows, random_state=seed).reset_index(drop=True)
-
-    relevant = relevant_items_by_user(test, min_rating_relevant)
-    if max_eval_users is not None and len(relevant) > max_eval_users:
-        rng = np.random.default_rng(seed)
-        users = list(relevant)
-        chosen = rng.choice(len(users), size=max_eval_users, replace=False)
-        relevant = {users[int(idx)]: relevant[users[int(idx)]] for idx in chosen}
-    if progress:
-        print(
-            f"[{dataset}] ranking users: {len(relevant)} "
-            f"(cap={max_eval_users}, negatives/user={num_negatives})",
-            flush=True,
-        )
-
-    all_items = np.asarray(pd.unique(train["parent_asin"]), dtype=object)
-    user_train_items = {
-        user: set(items) for user, items in train.groupby("user_id")["parent_asin"]
-    }
-
-    rows = []
-    for name, model in models.items():
         if progress:
             print(f"[{dataset}] predicting ratings for {name} on {len(rating_test):,} rows ...", flush=True)
         rating_start = perf_counter()
@@ -155,6 +174,12 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                 "max_test_rows": max_test_rows,
             }
         )
+        if metrics_path is not None:
+            path = Path(metrics_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(pd.DataFrame(rows).to_json(orient="records", indent=2))
+            if progress:
+                print(f"[{dataset}] wrote partial metrics -> {path}", flush=True)
     return pd.DataFrame(rows)
 
 
@@ -177,6 +202,8 @@ def build_models(
     alpha=None,
     progress=False,
     include_ablation=False,
+    graph=False,
+    graph_only=False,
 ):
     """Construct the model set, sharing component instances with the hybrids.
 
@@ -198,17 +225,23 @@ def build_models(
 
     mc = config.get("models", {})
     af = config.get("advanced_features", {})
-    cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
-    content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
-    svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
-
+    models = {}
+    content = None
+    svd = None
     blend_alpha = float(alpha if alpha is not None else config["hybrid"]["alpha"])
-    models = {"content": content, "svd": svd}
-    if not no_knn:
-        models["item_knn"] = KNNRecommender()
-    models["hybrid"] = WeightedHybrid(svd, content, alpha=blend_alpha)
 
-    if advanced:
+    if not graph_only:
+        cache_dir = Path(config["processed_dir"]) / dataset / "embeddings"
+        content = ContentBasedRecommender(embedder, cache_dir=cache_dir)
+        svd = SVDRecommender(random_state=mc.get("ranking_random_seed", 42))
+
+        models = {"content": content, "svd": svd}
+        if not no_knn:
+            models["item_knn"] = KNNRecommender()
+        models["hybrid"] = WeightedHybrid(svd, content, alpha=blend_alpha)
+
+    if advanced and not graph_only:
+        assert svd is not None
         seed = int(mc.get("ranking_random_seed", 42))
         af_dir = Path(config["processed_dir"]) / dataset / "advanced_features"
         models["random"] = RandomRecommender(seed=seed)
@@ -223,7 +256,9 @@ def build_models(
             # train-only sentiment/user/item aggregates (consumed if the offline job ran)
             review_features_dir=af_dir,
         )
-        if include_ablation:
+        if not include_ablation:
+            models["content_enriched"] = content_enriched
+        else:
             # Ablation mode: register explicit names only. Omit the legacy
             # `content_enriched` row so the same sentiment-aware model is not
             # fitted/scored twice in the same evaluation table.
@@ -238,8 +273,6 @@ def build_models(
                 use_item_sentiment=False,
                 use_user_offset=False,
             )
-        else:
-            models["content_enriched"] = content_enriched
         models["calibrated_hybrid"] = CalibratedHybrid(
             svd,
             content_enriched,
@@ -249,6 +282,64 @@ def build_models(
             .get("tuning", {})
             .get("calibration_max_rows"),
             random_state=seed,
+            progress=progress,
+        )
+
+    if graph:
+        from src.models.graphsage import GraphSAGERecommender
+        from src.models.graphsage_bpr import GraphSAGEBPRRecommender
+        from src.models.lightgcn import LightGCNRecommender
+
+        gc = config.get("graph", {})
+        af_dir = Path(config["processed_dir"]) / dataset / "advanced_features"
+        models["lightgcn"] = LightGCNRecommender(
+            embedding_dim=int(gc.get("embedding_dim", 64)),
+            n_layers=int(gc.get("n_layers", 2)),
+            epochs=int(gc.get("epochs", 10)),
+            lr=float(gc.get("lr", 0.005)),
+            weight_decay=float(gc.get("weight_decay", 0.0)),
+            num_negatives=int(gc.get("num_negatives", 1)),
+            batch_size=int(gc.get("batch_size", 1024)),
+            seed=int(gc.get("seed", 42)),
+            device=str(gc.get("device", "auto")),
+            min_rating_positive=float(gc.get("min_rating_positive", 4.0)),
+            validation_fraction=float(gc.get("validation_fraction", 0.1)),
+            progress=progress,
+        )
+        models["graphsage"] = GraphSAGERecommender(
+            embedder=embedder,
+            generic_roots=af.get("generic_category_roots", []),
+            max_vocab=int(af.get("category_vocab_max", 256)),
+            min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+            hidden_dim=int(gc.get("embedding_dim", 64)),
+            n_layers=int(gc.get("n_layers", 2)),
+            epochs=int(gc.get("epochs", 10)),
+            lr=float(gc.get("lr", 0.005)),
+            weight_decay=float(gc.get("weight_decay", 0.0)),
+            batch_size=int(gc.get("batch_size", 1024)),
+            seed=int(gc.get("seed", 42)),
+            device=str(gc.get("device", "auto")),
+            cache_dir=af_dir / "title_desc_embeddings",
+            review_features_dir=af_dir,
+            progress=progress,
+        )
+        models["graphsage_bpr"] = GraphSAGEBPRRecommender(
+            embedder=embedder,
+            generic_roots=af.get("generic_category_roots", []),
+            max_vocab=int(af.get("category_vocab_max", 256)),
+            min_doc_freq=int(af.get("category_min_doc_freq", 5)),
+            hidden_dim=int(gc.get("embedding_dim", 64)),
+            n_layers=int(gc.get("n_layers", 2)),
+            epochs=int(gc.get("epochs", 10)),
+            lr=float(gc.get("lr", 0.005)),
+            weight_decay=float(gc.get("weight_decay", 0.0)),
+            num_negatives=int(gc.get("num_negatives", 1)),
+            batch_size=int(gc.get("batch_size", 1024)),
+            seed=int(gc.get("seed", 42)),
+            device=str(gc.get("device", "auto")),
+            cache_dir=af_dir / "title_desc_embeddings",
+            review_features_dir=af_dir,
+            validation_fraction=float(gc.get("validation_fraction", 0.1)),
             progress=progress,
         )
     return models
@@ -274,6 +365,38 @@ def main(argv=None):
         "--include-ablation", action="store_true",
         help="register content_enriched_with_sentiment and content_enriched_no_sentiment for direct comparison",
     )
+    parser.add_argument(
+        "--graph", action="store_true",
+        help="register lightgcn + graphsage (requires torch_geometric)",
+    )
+    parser.add_argument(
+        "--graph-only", action="store_true",
+        help="evaluate only lightgcn + graphsage; implies --graph and skips baseline/advanced models",
+    )
+    parser.add_argument(
+        "--checkpoint-tag",
+        help="append a tag to graph checkpoint filenames, e.g. 20ep -> lightgcn_20ep.pt",
+    )
+    parser.add_argument(
+        "--only-model",
+        help="fit/evaluate only one registered model, e.g. lightgcn",
+    )
+    parser.add_argument(
+        "--train-only", action="store_true",
+        help="fit selected model(s), save graph checkpoints, and skip metric evaluation",
+    )
+    parser.add_argument(
+        "--graph-epochs", type=int,
+        help="override graph.epochs for this run, e.g. 20",
+    )
+    parser.add_argument(
+        "--graph-num-negatives", type=int,
+        help="override graph.num_negatives for this run, e.g. 4 for LightGCN BPR",
+    )
+    parser.add_argument(
+        "--graph-weight-decay", type=float,
+        help="override graph.weight_decay for this run, e.g. 1e-5",
+    )
     parser.add_argument("--alpha", type=float,
                         help="override hybrid blend alpha for this run")
     parser.add_argument(
@@ -284,8 +407,30 @@ def main(argv=None):
 
     if args.include_ablation and not args.advanced:
         parser.error("--include-ablation requires --advanced")
+    if args.graph_only:
+        args.graph = True
+    if args.graph_only and args.advanced:
+        parser.error("--graph-only cannot be combined with --advanced")
+    if args.graph_only and args.tune_alpha:
+        parser.error("--graph-only cannot be combined with --tune-alpha")
+    if args.checkpoint_tag and not args.graph:
+        parser.error("--checkpoint-tag requires --graph or --graph-only")
+    if args.train_only and not args.graph:
+        parser.error("--train-only requires --graph or --graph-only")
+    if args.graph_epochs is not None and not args.graph:
+        parser.error("--graph-epochs requires --graph or --graph-only")
+    if args.graph_num_negatives is not None and not args.graph:
+        parser.error("--graph-num-negatives requires --graph or --graph-only")
+    if args.graph_weight_decay is not None and not args.graph:
+        parser.error("--graph-weight-decay requires --graph or --graph-only")
 
     config = load_config(args.config)
+    if args.graph_epochs is not None:
+        config.setdefault("graph", {})["epochs"] = args.graph_epochs
+    if args.graph_num_negatives is not None:
+        config.setdefault("graph", {})["num_negatives"] = args.graph_num_negatives
+    if args.graph_weight_decay is not None:
+        config.setdefault("graph", {})["weight_decay"] = args.graph_weight_decay
     train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
     if not args.quiet:
         print(
@@ -298,11 +443,12 @@ def main(argv=None):
     embedder = build_embedder(config)
     if not args.quiet:
         print(f"[{args.dataset}] embedder device: {embedder.device}", flush=True)
-        print(
-            f"[{args.dataset}] collaborative filtering device: cpu "
-            "(scikit-surprise SVD/KNN)",
-            flush=True,
-        )
+        if not args.graph_only:
+            print(
+                f"[{args.dataset}] collaborative filtering device: cpu "
+                "(scikit-surprise SVD/KNN)",
+                flush=True,
+            )
 
     chosen_alpha = args.alpha
     if args.tune_alpha:
@@ -343,7 +489,26 @@ def main(argv=None):
         alpha=chosen_alpha,
         progress=not args.quiet,
         include_ablation=args.include_ablation,
+        graph=args.graph,
+        graph_only=args.graph_only,
     )
+    if args.only_model:
+        if args.only_model not in models:
+            parser.error(
+                f"--only-model must be one of: {', '.join(sorted(models))}"
+            )
+        models = {args.only_model: models[args.only_model]}
+    if args.graph and not args.quiet:
+        graph_devices = {
+            name: str(getattr(model, "device", "n/a"))
+            for name, model in models.items()
+            if name in {"lightgcn", "graphsage", "graphsage_bpr"}
+        }
+        print(f"[{args.dataset}] graph model devices: {graph_devices}", flush=True)
+
+    out_dir = Path(config["processed_dir"]) / args.dataset
+    out_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = out_dir / "metrics.json"
 
     table = evaluate_models(
         models,
@@ -358,15 +523,20 @@ def main(argv=None):
         max_eval_users=args.max_eval_users,
         max_test_rows=args.max_test_rows,
         progress=not args.quiet,
+        checkpoint_dir=Path(config["processed_dir"]) / args.dataset / "graph_checkpoints"
+        if args.graph else None,
+        metrics_path=metrics_path,
+        checkpoint_tag=args.checkpoint_tag,
+        train_only=args.train_only,
     )
 
-    out_dir = Path(config["processed_dir"]) / args.dataset
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "metrics.json").write_text(table.to_json(orient="records", indent=2))
-    if not args.quiet:
-        print(f"[{args.dataset}] wrote metrics.json", flush=True)
+    if not args.train_only:
+        metrics_path.write_text(table.to_json(orient="records", indent=2))
+        if not args.quiet:
+            print(f"[{args.dataset}] wrote final metrics.json", flush=True)
     print(table.to_string(index=False))
-    print(f"\nMetrics -> {out_dir / 'metrics.json'}")
+    if not args.train_only:
+        print(f"\nMetrics -> {metrics_path}")
 
 
 if __name__ == "__main__":
