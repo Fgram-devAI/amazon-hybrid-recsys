@@ -112,7 +112,7 @@ def _render_model_comparison(data: DashboardData) -> None:
     if "advanced" in tables:
         st.subheader("Primary advanced-models table")
         df = charts.metrics_table(tables["advanced"], label_col="model")
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
         st.bar_chart(df.set_index("Model")[["RMSE", "MAE"]])
         if "F1@10" in df.columns:
             st.bar_chart(df.set_index("Model")[["P@10", "R@10", "F1@10"]])
@@ -120,12 +120,12 @@ def _render_model_comparison(data: DashboardData) -> None:
     if "alpha_sweep" in tables:
         st.subheader("Calibrated hybrid α sweep")
         df = charts.metrics_table(tables["alpha_sweep"], label_col="alpha")
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
 
     if "sentiment_ablation" in tables:
         st.subheader("Sentiment ablation")
         df = charts.metrics_table(tables["sentiment_ablation"], label_col="model")
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
 
     st.markdown(
         "**Current conclusions:** SVD is the strongest RMSE baseline; popularity "
@@ -142,7 +142,7 @@ def _render_graph_models(data: DashboardData) -> None:
     if "graph" in tables:
         st.subheader("Graph checkpoint table")
         df = charts.metrics_table(tables["graph"], label_col="model")
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
 
     if "graphsage_bpr_ablation" in tables:
         st.subheader("GraphSAGE-BPR feature ablation")
@@ -150,7 +150,7 @@ def _render_graph_models(data: DashboardData) -> None:
             tables["graphsage_bpr_ablation"],
             label_col="feature_set",
         )
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
 
     st.markdown(
         "**Interpretation:** text embeddings carry the useful GraphSAGE-BPR "
@@ -172,7 +172,7 @@ def _render_graph_eda(data: DashboardData) -> None:
         import pandas as pd
 
         df = pd.DataFrame(rows)
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
         st.subheader("Projection scale")
         st.bar_chart(df.set_index("projection")[["items", "edges", "largest_cc"]])
         alignment_cols = [
@@ -191,7 +191,7 @@ def _render_graph_eda(data: DashboardData) -> None:
             "layout/community detection runs inside Streamlit."
         )
         fig = charts.graph_subgraph_3d_figure(data.graph_subgraph_3d)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("3D graph sample unavailable.")
 
@@ -226,7 +226,7 @@ def _render_item_explorer(data: DashboardData) -> None:
             | df["parent_asin"].astype(str).str.contains(query, case=False, na=False)
         )
         df = df[mask]
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
     st.caption(
         "Demo mode shows a small curated metadata sample. With local "
         "`data/processed/<dataset>/sample_items.json` present, the local "
