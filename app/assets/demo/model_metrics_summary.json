@@ -1,0 +1,42 @@
+{
+  "dataset": "video_games",
+  "ranking_protocol": "sampled candidates, K=10, 100 negatives/user, seed=42",
+  "n_eval_users_full": 79248,
+  "tables": {
+    "advanced": [
+      {"model": "content", "rmse": 1.4757, "mae": 1.0580, "p_at_10": 0.0399, "r_at_10": 0.2856, "f1_at_10": 0.0675},
+      {"model": "svd", "rmse": 1.1337, "mae": 0.8173, "p_at_10": 0.0335, "r_at_10": 0.2100, "f1_at_10": 0.0543},
+      {"model": "hybrid", "rmse": 1.1337, "mae": 0.8173, "p_at_10": 0.0335, "r_at_10": 0.2100, "f1_at_10": 0.0543},
+      {"model": "random", "rmse": 1.2569, "mae": 0.9780, "p_at_10": 0.0152, "r_at_10": 0.0975, "f1_at_10": 0.0249},
+      {"model": "popularity", "rmse": 1.2270, "mae": 0.9059, "p_at_10": 0.0776, "r_at_10": 0.5108, "f1_at_10": 0.1284},
+      {"model": "content_enriched", "rmse": 1.2660, "mae": 0.8258, "p_at_10": 0.0755, "r_at_10": 0.5014, "f1_at_10": 0.1250},
+      {"model": "calibrated_hybrid", "rmse": 1.1654, "mae": 0.7891, "p_at_10": 0.0528, "r_at_10": 0.3126, "f1_at_10": 0.0848}
+    ],
+    "alpha_sweep": [
+      {"alpha": 0.75, "rmse": 1.1501, "mae": 0.7698, "p_at_10": 0.0556, "r_at_10": 0.3330, "f1_at_10": 0.0896},
+      {"alpha": 0.60, "rmse": 1.1596, "mae": 0.7664, "p_at_10": 0.0588, "r_at_10": 0.3562, "f1_at_10": 0.0950},
+      {"alpha": 0.50, "rmse": 1.1737, "mae": 0.7679, "p_at_10": 0.0619, "r_at_10": 0.3789, "f1_at_10": 0.1003},
+      {"alpha": 0.40, "rmse": 1.1938, "mae": 0.7722, "p_at_10": 0.0662, "r_at_10": 0.4093, "f1_at_10": 0.1076}
+    ],
+    "sentiment_ablation": [
+      {"model": "content_enriched_with_sentiment", "rmse": 1.2660, "mae": 0.8258, "p_at_10": 0.0755, "r_at_10": 0.5014, "f1_at_10": 0.1250},
+      {"model": "content_enriched_no_sentiment", "rmse": 1.1777, "mae": 0.7917, "p_at_10": 0.0627, "r_at_10": 0.4278, "f1_at_10": 0.1047}
+    ],
+    "graph": [
+      {"model": "LightGCN 10ep / neg1", "rmse": 1.2472, "mae": 0.9556, "p_at_10": 0.0880, "r_at_10": 0.5755, "f1_at_10": 0.1454},
+      {"model": "LightGCN 20ep / neg1", "rmse": 1.2459, "mae": 0.9589, "p_at_10": 0.0882, "r_at_10": 0.5782, "f1_at_10": 0.1458},
+      {"model": "LightGCN 40ep / neg4", "rmse": 1.2433, "mae": 0.9598, "p_at_10": 0.0901, "r_at_10": 0.5923, "f1_at_10": 0.1491},
+      {"model": "LightGCN 40ep / neg4 / wd1e-5", "rmse": 1.2433, "mae": 0.9598, "p_at_10": 0.0902, "r_at_10": 0.5928, "f1_at_10": 0.1492},
+      {"model": "GraphSAGE MSE 10ep", "rmse": 1.1613, "mae": 0.7640, "p_at_10": 0.0235, "r_at_10": 0.1488, "f1_at_10": 0.0380},
+      {"model": "GraphSAGE MSE 20ep", "rmse": 1.1695, "mae": 0.7388, "p_at_10": 0.0546, "r_at_10": 0.3483, "f1_at_10": 0.0891},
+      {"model": "GraphSAGE-BPR 20ep / neg4", "rmse": 1.2559, "mae": 0.9814, "p_at_10": 0.0550, "r_at_10": 0.3573, "f1_at_10": 0.0906},
+      {"model": "GraphSAGE-BPR 20ep / neg4 / no_sentiment", "rmse": 1.2566, "mae": 0.9782, "p_at_10": 0.0563, "r_at_10": 0.3722, "f1_at_10": 0.0934}
+    ],
+    "graphsage_bpr_ablation": [
+      {"feature_set": "full", "rmse": 1.2554, "mae": 0.9858, "p_at_10": 0.0339, "r_at_10": 0.2142, "f1_at_10": 0.0556},
+      {"feature_set": "no_text", "rmse": 1.2589, "mae": 0.9689, "p_at_10": 0.0211, "r_at_10": 0.1326, "f1_at_10": 0.0342},
+      {"feature_set": "no_sentiment", "rmse": 1.2556, "mae": 0.9826, "p_at_10": 0.0427, "r_at_10": 0.2706, "f1_at_10": 0.0699},
+      {"feature_set": "metadata_only", "rmse": 1.2561, "mae": 0.9809, "p_at_10": 0.0211, "r_at_10": 0.1363, "f1_at_10": 0.0346}
+    ]
+  }
+}
