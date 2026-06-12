@@ -172,7 +172,9 @@ split (`79,248` ranking users).
 | LightGCN 40ep / neg4 | 1.2433 | 0.9598 | 0.0901 | 0.5923 | 0.1491 |
 | LightGCN 40ep / neg4 / wd1e-5 | 1.2433 | 0.9598 | **0.0902** | **0.5928** | **0.1492** |
 | GraphSAGE MSE 10ep | **1.1613** | **0.7640** | 0.0235 | 0.1488 | 0.0380 |
+| GraphSAGE MSE 20ep | 1.1695 | 0.7388 | 0.0546 | 0.3483 | 0.0891 |
 | GraphSAGE-BPR 20ep / neg4 | 1.2559 | 0.9814 | 0.0550 | 0.3573 | 0.0906 |
+| GraphSAGE-BPR 20ep / neg4 / no_sentiment | 1.2566 | 0.9782 | 0.0563 | 0.3722 | 0.0934 |
 
 LightGCN is the stronger ranking model, which matches its BPR top-K objective.
 Increasing epochs alone (`10 -> 20`) was almost flat, but increasing BPR negative
@@ -439,6 +441,39 @@ pip install leidenalg python-igraph pyamg
 
 Leakage rule (inherited): the graph and all analysis read TRAIN
 interactions only; this module never feeds back into any model feature.
+
+## Streamlit App
+
+A read-only dashboard renders the project's EDA, model-comparison tables, graph
+checkpoint results, GraphSAGE-BPR feature ablation, and item-explorer sample on
+top of the metrics/EDA artifacts produced by the offline pipeline.
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+The app runs in two modes:
+
+- **Full local mode** — when `data/processed/<dataset>/eda_summary.json` exists,
+  the dashboard reads the user's locally generated EDA, metrics, graph-analysis,
+  and metadata artifacts. Run the standard preprocessing/evaluation/graph
+  commands first to populate them.
+- **Bundled demo mode** — on a fresh clone with no local processed data, the
+  dashboard falls back to a small curated bundle under `app/assets/demo/`.
+  Numeric values in the demo bundle are copied verbatim from this README, so
+  demo mode and full local mode show identical headline metrics. To exercise
+  demo mode without moving local artifacts, point the loader at a nonexistent
+  processed directory:
+
+  ```bash
+  RECSYS_PROCESSED_DIR=/tmp/amazon-hybrid-recsys-no-processed \
+    streamlit run app/streamlit_app.py
+  ```
+
+The dashboard never trains models, recomputes embeddings, runs graph community
+detection, or downloads raw data — it only reads previously generated artifacts.
+The Graph EDA tab includes a 2D projection summary and a capped 3D sample from
+the largest Louvain community; the full graph layout is never computed in the app.
 
 ## Roadmap
 
