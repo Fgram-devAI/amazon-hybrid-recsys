@@ -27,6 +27,7 @@ networkx>=3.3,<4.0      # built-in louvain_communities, bipartite utilities
 streamlit
 matplotlib
 seaborn
+plotly
 
 # Dev
 pytest

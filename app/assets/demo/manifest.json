@@ -1,0 +1,6 @@
+{
+  "dataset": "video_games",
+  "generated_from": "data/processed/video_games artifacts + README.md (2026-06-12)",
+  "generated_on": "2026-06-12",
+  "notes": "Curated summary only; raw/processed Amazon data is not committed. All numeric values are copied verbatim from README.md so demo mode and local mode show identical headline metrics."
+}
