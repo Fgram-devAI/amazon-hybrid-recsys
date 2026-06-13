@@ -31,13 +31,18 @@ def load_interactions(records):
     return df, raw_count
 
 
-def deduplicate_interactions(df):
-    """Keep exactly one interaction per (user_id, parent_asin): the latest by timestamp.
+def deduplicate_interactions(df, policy="latest"):
+    """Keep exactly one interaction per (user_id, parent_asin) by timestamp.
 
-    Stable sort makes the choice deterministic when timestamps are missing or tied.
+    policy="latest" (default) keeps the most-recent timestamp; "first" keeps the
+    earliest. Stable sort makes the choice deterministic when timestamps are
+    missing or tied.
     """
+    if policy not in ("latest", "first"):
+        raise ValueError(f"unknown dedup policy: {policy!r}")
     ordered = df.sort_values("timestamp", kind="stable", na_position="first")
-    deduped = ordered.drop_duplicates(subset=["user_id", "parent_asin"], keep="last")
+    keep = "last" if policy == "latest" else "first"
+    deduped = ordered.drop_duplicates(subset=["user_id", "parent_asin"], keep=keep)
     return deduped.reset_index(drop=True)
 
 

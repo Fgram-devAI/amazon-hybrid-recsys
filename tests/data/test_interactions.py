@@ -1,5 +1,6 @@
 """Tests for interaction-matrix preprocessing."""
 
+import pytest
 import pandas as pd
 
 from src.data.interactions import (
@@ -103,3 +104,35 @@ def test_split_per_user_handles_empty_input():
     train, test = split_per_user(empty, test_size=0.2, random_seed=42)
 
     assert len(train) == 0 and len(test) == 0
+
+
+def test_deduplicate_keeps_earliest_when_policy_first():
+    df = pd.DataFrame(
+        [
+            {"user_id": "u1", "parent_asin": "i1", "rating": 3.0, "timestamp": 1},
+            {"user_id": "u1", "parent_asin": "i1", "rating": 5.0, "timestamp": 9},
+        ]
+    )
+    out = deduplicate_interactions(df, policy="first")
+    assert len(out) == 1
+    assert out.iloc[0]["rating"] == 3.0
+
+
+def test_deduplicate_keeps_latest_by_default_unchanged():
+    df = pd.DataFrame(
+        [
+            {"user_id": "u1", "parent_asin": "i1", "rating": 3.0, "timestamp": 1},
+            {"user_id": "u1", "parent_asin": "i1", "rating": 5.0, "timestamp": 9},
+        ]
+    )
+    out = deduplicate_interactions(df)  # default "latest"
+    assert len(out) == 1
+    assert out.iloc[0]["rating"] == 5.0
+
+
+def test_deduplicate_invalid_policy_raises():
+    df = pd.DataFrame(
+        [{"user_id": "u1", "parent_asin": "i1", "rating": 3.0, "timestamp": 1}]
+    )
+    with pytest.raises(ValueError):
+        deduplicate_interactions(df, policy="middle")
