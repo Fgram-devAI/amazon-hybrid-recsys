@@ -5,9 +5,19 @@ must not call ``render()`` and must not raise.
 """
 from __future__ import annotations
 
+import runpy
+from pathlib import Path
+
 
 def test_streamlit_app_imports_without_rendering() -> None:
     import app.streamlit_app as module
 
     assert hasattr(module, "render")
     assert callable(module.render)
+
+
+def test_streamlit_app_imports_when_executed_by_path() -> None:
+    path = Path(__file__).resolve().parents[2] / "app" / "streamlit_app.py"
+    namespace = runpy.run_path(str(path), run_name="streamlit_app_smoke")
+
+    assert callable(namespace["render"])
