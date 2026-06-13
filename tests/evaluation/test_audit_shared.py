@@ -6,6 +6,7 @@ import pytest
 
 from src.evaluation._audit_shared import (
     compute_checkpoint_audit_metrics,
+    processed_dataset_key,
     resolve_split_protocol,
 )
 
@@ -20,6 +21,27 @@ def test_resolve_split_protocol_reads_eda_summary(tmp_path):
         str(processed), "video_games", {"split_protocol": "per_user_chronological_80_20"}
     )
     assert result == "leave_last_out"
+
+
+def test_resolve_split_protocol_reads_suffixed_leave_last_out_summary(tmp_path):
+    processed = tmp_path / "processed"
+    (processed / "video_games__leave_last_out").mkdir(parents=True)
+    (processed / "video_games__leave_last_out" / "eda_summary.json").write_text(
+        json.dumps({"split_protocol": "leave_last_out"})
+    )
+    result = resolve_split_protocol(
+        str(processed), "video_games", {"split_protocol": "leave_last_out"}
+    )
+    assert result == "leave_last_out"
+
+
+def test_processed_dataset_key_adds_non_default_suffix_once():
+    assert processed_dataset_key("video_games", "per_user_chronological_80_20") == "video_games"
+    assert processed_dataset_key("video_games", "leave_last_out") == "video_games__leave_last_out"
+    assert (
+        processed_dataset_key("video_games__leave_last_out", "leave_last_out")
+        == "video_games__leave_last_out"
+    )
 
 
 def test_resolve_split_protocol_falls_back_to_config(tmp_path):

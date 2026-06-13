@@ -17,6 +17,7 @@ from tqdm import tqdm
 from src.data.config import load_config
 from src.evaluation._audit_shared import (
     compute_checkpoint_audit_metrics,
+    processed_dataset_key,
     resolve_split_protocol,
 )
 from src.evaluation.evaluate import _load_processed, sample_negatives
@@ -93,8 +94,6 @@ def evaluate_fitted_graphsage(
         exclude = user_train_items.get(user, set()) | rel
         negatives = sample_negatives(all_items, exclude, num_negatives, rng)
         ranked = model.recommend(user, k, candidates=list(rel) + negatives)
-        if not rel:
-            continue
         per_user_data.append({"ranked": ranked, "relevant": rel})
 
     audit = compute_checkpoint_audit_metrics(per_user_data, k=k, split_protocol=split_protocol)
@@ -124,8 +123,12 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
-    processed = Path(config["processed_dir"]) / args.dataset
+    split_protocol = resolve_split_protocol(
+        config["processed_dir"], args.dataset, config["evaluation"]
+    )
+    artifact_dataset = processed_dataset_key(args.dataset, split_protocol)
+    train, test, metadata = _load_processed(config["processed_dir"], artifact_dataset)
+    processed = Path(config["processed_dir"]) / artifact_dataset
     checkpoint = Path(args.checkpoint) if args.checkpoint else (
         processed / "graph_checkpoints" / "graphsage.pt"
     )
@@ -173,9 +176,6 @@ def main(argv: list[str] | None = None) -> None:
             flush=True,
         )
 
-    split_protocol = resolve_split_protocol(
-        config["processed_dir"], args.dataset, config["evaluation"]
-    )
     table = evaluate_fitted_graphsage(
         model,
         train,

@@ -6,7 +6,7 @@ from pathlib import Path
 from time import perf_counter
 
 from src.data.config import load_config
-from src.evaluation._audit_shared import resolve_split_protocol
+from src.evaluation._audit_shared import processed_dataset_key, resolve_split_protocol
 from src.evaluation.evaluate import _load_processed
 from src.evaluation.evaluate_graphsage_checkpoint import evaluate_fitted_graphsage
 from src.models.embedding import build_embedder
@@ -33,8 +33,12 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
-    processed = Path(config["processed_dir"]) / args.dataset
+    split_protocol = resolve_split_protocol(
+        config["processed_dir"], args.dataset, config["evaluation"]
+    )
+    artifact_dataset = processed_dataset_key(args.dataset, split_protocol)
+    train, test, metadata = _load_processed(config["processed_dir"], artifact_dataset)
+    processed = Path(config["processed_dir"]) / artifact_dataset
     checkpoint = Path(args.checkpoint) if args.checkpoint else (
         processed / "graph_checkpoints" / "graphsage_bpr.pt"
     )
@@ -85,9 +89,6 @@ def main(argv: list[str] | None = None) -> None:
             flush=True,
         )
 
-    split_protocol = resolve_split_protocol(
-        config["processed_dir"], args.dataset, config["evaluation"]
-    )
     table = evaluate_fitted_graphsage(
         model,
         train,

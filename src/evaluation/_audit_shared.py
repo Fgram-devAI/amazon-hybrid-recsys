@@ -11,17 +11,33 @@ from pathlib import Path
 
 from src.evaluation.metrics import aggregate_metric_bundle, compute_user_metric_bundle
 
+DEFAULT_SPLIT_PROTOCOL = "per_user_chronological_80_20"
+
+
+def processed_dataset_key(dataset_key: str, split_protocol: str) -> str:
+    """Return the processed artifact directory key for a split protocol."""
+    if split_protocol == DEFAULT_SPLIT_PROTOCOL:
+        return dataset_key
+    suffix = f"__{split_protocol}"
+    return dataset_key if dataset_key.endswith(suffix) else f"{dataset_key}{suffix}"
+
 
 def resolve_split_protocol(processed_dir, dataset_key, eval_config) -> str:
-    summary_path = Path(processed_dir) / dataset_key / "eda_summary.json"
-    if summary_path.exists():
+    fallback = eval_config.get("split_protocol", DEFAULT_SPLIT_PROTOCOL)
+    candidates = [
+        Path(processed_dir) / processed_dataset_key(dataset_key, fallback) / "eda_summary.json",
+        Path(processed_dir) / dataset_key / "eda_summary.json",
+    ]
+    for summary_path in dict.fromkeys(candidates):
         try:
+            if not summary_path.exists():
+                continue
             data = json.loads(summary_path.read_text())
             if "split_protocol" in data:
                 return str(data["split_protocol"])
         except (OSError, json.JSONDecodeError):
             pass
-    return eval_config.get("split_protocol", "per_user_chronological_80_20")
+    return fallback
 
 
 def compute_checkpoint_audit_metrics(per_user_data, k, split_protocol) -> dict:

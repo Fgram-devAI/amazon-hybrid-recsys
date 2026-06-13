@@ -436,7 +436,7 @@ def main(argv=None):
     if args.graph_feature_set is not None and not args.graph:
         parser.error("--graph-feature-set requires --graph or --graph-only")
 
-    from src.evaluation._audit_shared import resolve_split_protocol
+    from src.evaluation._audit_shared import processed_dataset_key, resolve_split_protocol
 
     config = load_config(args.config)
     if args.graph_epochs is not None:
@@ -448,7 +448,8 @@ def main(argv=None):
     split_protocol = resolve_split_protocol(
         config["processed_dir"], args.dataset, config["evaluation"]
     )
-    train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
+    artifact_dataset = processed_dataset_key(args.dataset, split_protocol)
+    train, test, metadata = _load_processed(config["processed_dir"], artifact_dataset)
     if not args.quiet:
         print(
             f"[{args.dataset}] loaded train={len(train):,}, test={len(test):,}, "
@@ -475,7 +476,7 @@ def main(argv=None):
         from src.models.weighted_hybrid import WeightedHybrid
 
         tuning = config["hybrid"].get("tuning", {})
-        cache_dir = Path(config["processed_dir"]) / args.dataset / "embeddings"
+        cache_dir = Path(config["processed_dir"]) / artifact_dataset / "embeddings"
 
         def _factory(alpha_val: float):
             return WeightedHybrid(
@@ -500,7 +501,7 @@ def main(argv=None):
             print(f"[{args.dataset}] tuned alpha={chosen_alpha} from scores={result.scores}", flush=True)
 
     models = build_models(
-        config, args.dataset, embedder,
+        config, artifact_dataset, embedder,
         no_knn=args.no_knn,
         advanced=args.advanced,
         alpha=chosen_alpha,
@@ -524,7 +525,7 @@ def main(argv=None):
         }
         print(f"[{args.dataset}] graph model devices: {graph_devices}", flush=True)
 
-    out_dir = Path(config["processed_dir"]) / args.dataset
+    out_dir = Path(config["processed_dir"]) / artifact_dataset
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_filename = (
         f"metrics_{args.checkpoint_tag}.json"
@@ -546,7 +547,7 @@ def main(argv=None):
         max_eval_users=args.max_eval_users,
         max_test_rows=args.max_test_rows,
         progress=not args.quiet,
-        checkpoint_dir=Path(config["processed_dir"]) / args.dataset / "graph_checkpoints"
+        checkpoint_dir=Path(config["processed_dir"]) / artifact_dataset / "graph_checkpoints"
         if args.graph else None,
         metrics_path=metrics_path,
         checkpoint_tag=args.checkpoint_tag,
