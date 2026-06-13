@@ -7,6 +7,7 @@ from src.data.interactions import (
     apply_k_core,
     deduplicate_interactions,
     load_interactions,
+    split_leave_last_out,
     split_per_user,
 )
 
@@ -136,3 +137,48 @@ def test_deduplicate_invalid_policy_raises():
     )
     with pytest.raises(ValueError):
         deduplicate_interactions(df, policy="middle")
+
+
+def _user_history(user, n):
+    return pd.DataFrame(
+        [
+            {"user_id": user, "parent_asin": f"i{n}_{i}", "rating": 5.0, "timestamp": i}
+            for i in range(n)
+        ]
+    )
+
+
+def test_split_leave_last_out_five_interactions_gives_3_1_1():
+    df = _user_history("u1", 5)
+    train, val, test = split_leave_last_out(df)
+    assert list(train["parent_asin"]) == ["i5_0", "i5_1", "i5_2"]
+    assert list(val["parent_asin"]) == ["i5_3"]
+    assert list(test["parent_asin"]) == ["i5_4"]
+
+
+def test_split_leave_last_out_two_interactions_gives_train_one_test_one_no_val():
+    df = _user_history("u1", 2)
+    train, val, test = split_leave_last_out(df)
+    assert list(train["parent_asin"]) == ["i2_0"]
+    assert val.empty
+    assert list(test["parent_asin"]) == ["i2_1"]
+
+
+def test_split_leave_last_out_one_interaction_goes_to_train_only():
+    df = _user_history("u1", 1)
+    train, val, test = split_leave_last_out(df)
+    assert len(train) == 1
+    assert val.empty
+    assert test.empty
+
+
+def test_split_leave_last_out_multiple_users_independent():
+    df = pd.concat([_user_history("u1", 5), _user_history("u2", 3)], ignore_index=True)
+    train, val, test = split_leave_last_out(df)
+    # u1: train=3, val=1, test=1; u2: train=1, val=1, test=1
+    assert (train["user_id"] == "u1").sum() == 3
+    assert (val["user_id"] == "u1").sum() == 1
+    assert (test["user_id"] == "u1").sum() == 1
+    assert (train["user_id"] == "u2").sum() == 1
+    assert (val["user_id"] == "u2").sum() == 1
+    assert (test["user_id"] == "u2").sum() == 1

@@ -96,3 +96,34 @@ def split_per_user(df, test_size, random_seed, chronological=True):
         else df.iloc[0:0].copy()
     )
     return train, test
+
+
+def split_leave_last_out(df):
+    """Per-user chronological leave-last-out split.
+
+    Returns (train, validation, test). Test is the latest interaction;
+    validation is the second-to-last (omitted for users with fewer than 3
+    interactions); the rest goes to train. Users with one interaction yield
+    train-only; users with zero yield empty frames.
+    """
+    train_parts, val_parts, test_parts = [], [], []
+    for _, group in df.groupby("user_id", sort=True):
+        ordered = group.sort_values("timestamp", kind="stable")
+        n = len(ordered)
+        if n == 0:
+            continue
+        if n == 1:
+            train_parts.append(ordered)
+            continue
+        if n == 2:
+            train_parts.append(ordered.iloc[:1])
+            test_parts.append(ordered.iloc[1:2])
+            continue
+        train_parts.append(ordered.iloc[: n - 2])
+        val_parts.append(ordered.iloc[n - 2 : n - 1])
+        test_parts.append(ordered.iloc[n - 1 : n])
+    empty = df.iloc[0:0].copy()
+    train = pd.concat(train_parts).reset_index(drop=True) if train_parts else empty.copy()
+    val = pd.concat(val_parts).reset_index(drop=True) if val_parts else empty.copy()
+    test = pd.concat(test_parts).reset_index(drop=True) if test_parts else empty.copy()
+    return train, val, test
