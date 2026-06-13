@@ -1,7 +1,6 @@
 """Tests that preprocess_dataset honors preprocessing.split_protocol and dedup_policy."""
 
 import json
-from pathlib import Path
 
 import pandas as pd
 import pytest

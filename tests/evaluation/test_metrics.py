@@ -109,7 +109,9 @@ def test_ndcg_at_k_none_when_no_relevant_items():
 
 def test_oracle_pr_f1_single_relevant_item_k10():
     # 1 relevant, K=10: oracle_hits = 1; P = 1/10, R = 1/1, F1 = 2*0.1/(1.1)
-    p, r, f = oracle_precision_recall_f1_at_k(relevant_count=1, k=10)
+    result = oracle_precision_recall_f1_at_k(relevant_count=1, k=10)
+    assert result is not None
+    p, r, f = result
     assert p == pytest.approx(0.1)
     assert r == pytest.approx(1.0)
     assert f == pytest.approx(2 * 0.1 * 1.0 / (0.1 + 1.0))
@@ -117,7 +119,9 @@ def test_oracle_pr_f1_single_relevant_item_k10():
 
 def test_oracle_pr_f1_more_relevant_than_k():
     # 15 relevant, K=10: oracle_hits = 10; P = 1.0, R = 10/15, F1 from harmonic mean
-    p, r, f = oracle_precision_recall_f1_at_k(relevant_count=15, k=10)
+    result = oracle_precision_recall_f1_at_k(relevant_count=15, k=10)
+    assert result is not None
+    p, r, f = result
     assert p == pytest.approx(1.0)
     assert r == pytest.approx(10 / 15)
     assert f == pytest.approx(2 * 1.0 * (10 / 15) / (1.0 + 10 / 15))
@@ -156,6 +160,7 @@ def test_compute_user_metric_bundle_one_hit_at_rank_2():
     # NDCG = (1/log2(3)) / 1.0
     # oracle: relevant_count=1 -> oracle_P=1/4, oracle_R=1, oracle_F1 = 2*0.25*1/1.25 = 0.4
     bundle = compute_user_metric_bundle(["a", "b", "c", "d"], {"b"}, k=4)
+    assert bundle is not None
     assert bundle["precision_at_k"] == pytest.approx(0.25)
     assert bundle["recall_at_k"] == pytest.approx(1.0)
     assert bundle["f1_at_k"] == pytest.approx(0.4)

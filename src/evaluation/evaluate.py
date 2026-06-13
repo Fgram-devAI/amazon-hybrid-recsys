@@ -11,7 +11,6 @@ from .metrics import (
     aggregate_metric_bundle,
     compute_user_metric_bundle,
     mae,
-    precision_recall_f1_at_k,
     relevant_items_by_user,
     rmse,
 )
