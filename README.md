@@ -149,17 +149,6 @@ Reproduction command:
   --dataset video_games --no-knn --advanced --include-ablation --alpha 0.6
 ```
 
-Earlier sampled run on the second benchmark (`movies_and_tv`, 5,000 ranking users):
-
-| Model | RMSE | MAE | P@10 | R@10 | F1@10 |
-|---|---|---|---|---|---|
-| content | 1.2539 | 0.8699 | 0.0618 | 0.3588 | 0.0975 |
-| svd | 1.0560 | 0.7503 | 0.0489 | 0.2521 | 0.0742 |
-| hybrid | 1.0832 | 0.7890 | 0.0513 | 0.2743 | 0.0793 |
-
-The P/R/F1 values are sampled-candidate metrics — compare them against the
-random and popularity rows before judging their absolute scale.
-
 ### Graph checkpoint eval (`video_games`)
 
 Checkpoint-based graph evaluation on the primary benchmark using the full held-out
@@ -239,20 +228,44 @@ one relevant test item.
 ### Audit metrics (`video_games`, sampled-candidate @10)
 
 Computed on the same sampled-candidate ranking protocol as the existing
-checkpoint table above. Cells marked `—` are not measured for this branch.
+checkpoint table above. LightGCN and GraphSAGE-BPR rows are checkpoint
+re-scores; no graph retraining is required for these audit fields.
 
 | Model | HitRate@10 | NDCG@10 | P/oracleP | R/oracleR | F1/oracleF1 |
 |---|---:|---:|---:|---:|---:|
-| popularity | — | — | — | — | — |
-| svd | — | — | — | — | — |
-| content_enriched | — | — | — | — | — |
-| calibrated_hybrid | — | — | — | — | — |
-| LightGCN 40ep / neg4 / wd1e-5 | — | — | — | — | — |
-| GraphSAGE MSE 20ep | — | — | — | — | — |
-| GraphSAGE-BPR 20ep / neg4 / no_sentiment | — | — | — | — | — |
+| popularity | 0.5902 | 0.3360 | 0.4999 | 0.5113 | 0.5032 |
+| svd | 0.2829 | 0.1303 | 0.2157 | 0.2102 | 0.2130 |
+| content_enriched | 0.5405 | **0.4599** | 0.4861 | 0.5019 | 0.4901 |
+| calibrated_hybrid | 0.4516 | 0.3484 | 0.3986 | 0.3793 | 0.3932 |
+| LightGCN 40ep / neg4 / wd1e-5 | **0.6673** | 0.4148 | **0.5811** | **0.5934** | **0.5849** |
+| GraphSAGE-BPR 20ep / neg4 / no_sentiment | 0.4574 | 0.2274 | 0.3629 | 0.3726 | 0.3660 |
+
+LightGCN is the strongest hit-rate/F1 ranker, reaching about 58.5% of the
+oracle F1@10 ceiling. `content_enriched` has the best NDCG@10, which means its
+successful hits tend to appear higher in the top-10 list even though it finds
+fewer users' positives than LightGCN.
 
 We do not compare raw F1@10 across projects or datasets unless the
 candidate-sampling and split protocols match.
+
+### Leave-last-out check (`video_games`, sampled-candidate @10)
+
+Leave-last-out holds out exactly one latest test item per user, with the
+second-latest item reserved for validation. On this protocol, oracle `P@10` is
+`0.1000`, oracle `F1@10` is `0.1818`, and `Recall@10 == HitRate@10` because
+there is only one relevant test item per evaluated user.
+
+| Model | RMSE | MAE | P@10 | HR/R@10 | F1@10 | NDCG@10 | F1/oracleF1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| popularity | 1.2676 | 0.9310 | 0.0502 | 0.5017 | 0.0912 | 0.3054 | 0.5017 |
+| content_enriched | 1.2634 | 0.8378 | 0.0469 | 0.4686 | 0.0852 | **0.4069** | 0.4686 |
+| calibrated_hybrid | **1.2257** | **0.8104** | 0.0386 | 0.3863 | 0.0702 | 0.3388 | 0.3863 |
+| LightGCN 20ep / neg4 / wd1e-5 | 1.2811 | 0.9875 | **0.0530** | **0.5301** | **0.0964** | 0.3400 | **0.5301** |
+
+The leave-last-out check keeps the same overall ranking story: LightGCN is the
+strongest hit-rate/F1 ranker, while enriched content gives the best NDCG among
+the measured rows. These graph results are from a leave-last-out LightGCN
+checkpoint trained on the suffixed split artifacts, not from the 80/20 checkpoint.
 
 ## Graph Recommender Models (LightGCN + GraphSAGE)
 
