@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from src.evaluation.metrics import (
+    aggregate_metric_bundle,
     compute_user_metric_bundle,
     hit_rate_at_k,
     mae,
@@ -183,3 +184,74 @@ def test_compute_user_metric_bundle_zero_hits_records_zeros():
     assert bundle["oracle_precision_at_k"] == pytest.approx(1.0)
     assert bundle["oracle_recall_at_k"] == pytest.approx(1.0)
     assert bundle["oracle_f1_at_k"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# aggregate_metric_bundle
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_metric_bundle_means_and_oracle_ratios():
+    # Two users; one perfect at rank 1, one half-hit at rank 2
+    # User A: recommended=[a,b], relevant={a}, K=2
+    #   P=0.5, R=1.0, F1=2/3, HR=1, NDCG=1, oracle P=0.5/R=1/F1=2/3/HR=1/NDCG=1
+    # User B: recommended=[a,b], relevant={b}, K=2
+    #   P=0.5, R=1.0, F1=2/3, HR=1, NDCG=1/log2(3), oracle same as A
+    bundle_a = compute_user_metric_bundle(["a", "b"], {"a"}, k=2)
+    bundle_b = compute_user_metric_bundle(["a", "b"], {"b"}, k=2)
+    assert bundle_a is not None and bundle_b is not None
+
+    agg = aggregate_metric_bundle([bundle_a, bundle_b], k=2)
+
+    assert agg["n_eval_users"] == 2
+    assert agg["precision_at_k"] == pytest.approx(0.5)
+    assert agg["recall_at_k"] == pytest.approx(1.0)
+    assert agg["f1_at_k"] == pytest.approx(2 / 3)
+    assert agg["hit_rate_at_k"] == pytest.approx(1.0)
+    # NDCG mean = (1 + 1/log2(3)) / 2
+    assert agg["ndcg_at_k"] == pytest.approx((1.0 + 1.0 / math.log2(3)) / 2)
+    # oracle means equal each user's ceiling
+    assert agg["oracle_precision_at_k"] == pytest.approx(0.5)
+    assert agg["oracle_recall_at_k"] == pytest.approx(1.0)
+    assert agg["oracle_f1_at_k"] == pytest.approx(2 / 3)
+    assert agg["oracle_hit_rate_at_k"] == 1.0
+    assert agg["oracle_ndcg_at_k"] == 1.0
+    # ratios: mean(P)/mean(oracle_P), etc. — all equal 1.0 here
+    assert agg["precision_oracle_ratio_at_k"] == pytest.approx(1.0)
+    assert agg["recall_oracle_ratio_at_k"] == pytest.approx(1.0)
+    assert agg["f1_oracle_ratio_at_k"] == pytest.approx(1.0)
+
+
+def test_aggregate_metric_bundle_empty_input_returns_zero_users():
+    agg = aggregate_metric_bundle([], k=10)
+    assert agg["n_eval_users"] == 0
+    assert agg["precision_at_k"] is None
+    assert agg["recall_at_k"] is None
+    assert agg["f1_at_k"] is None
+    assert agg["hit_rate_at_k"] is None
+    assert agg["ndcg_at_k"] is None
+    assert agg["oracle_precision_at_k"] is None
+    assert agg["precision_oracle_ratio_at_k"] is None
+
+
+def test_aggregate_metric_bundle_oracle_ratio_uses_mean_over_mean():
+    # Build a bundle where per-user ratios differ from mean/mean,
+    # so we can show the implementation chose mean(P)/mean(oP), not mean(P/oP).
+    # User A: P=0.10, oracle_P=0.10 -> per-user ratio = 1.0
+    # User B: P=0.00, oracle_P=1.00 -> per-user ratio = 0.0
+    # mean(P)=0.05, mean(oP)=0.55 -> mean/mean = 0.0909... ;  mean per-user ratio = 0.5
+    bundle_a = {
+        "precision_at_k": 0.10, "recall_at_k": 0.10, "f1_at_k": 0.10,
+        "hit_rate_at_k": 1.0, "ndcg_at_k": 1.0,
+        "oracle_precision_at_k": 0.10, "oracle_recall_at_k": 0.10,
+        "oracle_f1_at_k": 0.10, "oracle_hit_rate_at_k": 1.0, "oracle_ndcg_at_k": 1.0,
+    }
+    bundle_b = {
+        "precision_at_k": 0.0, "recall_at_k": 0.0, "f1_at_k": 0.0,
+        "hit_rate_at_k": 0.0, "ndcg_at_k": 0.0,
+        "oracle_precision_at_k": 1.0, "oracle_recall_at_k": 1.0,
+        "oracle_f1_at_k": 1.0, "oracle_hit_rate_at_k": 1.0, "oracle_ndcg_at_k": 1.0,
+    }
+    agg = aggregate_metric_bundle([bundle_a, bundle_b], k=10)
+    assert agg["precision_oracle_ratio_at_k"] == pytest.approx(0.05 / 0.55)
+    assert agg["precision_oracle_ratio_at_k"] != pytest.approx(0.5)

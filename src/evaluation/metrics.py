@@ -105,6 +105,53 @@ def oracle_ndcg_at_k(relevant_count) -> float | None:
     return 1.0
 
 
+def _mean_or_none(values):
+    return float(sum(values) / len(values)) if values else None
+
+
+def _ratio_or_none(numer, denom):
+    if numer is None or denom is None or denom == 0.0:
+        return None
+    return numer / denom
+
+
+_BUNDLE_KEYS = (
+    "precision_at_k",
+    "recall_at_k",
+    "f1_at_k",
+    "hit_rate_at_k",
+    "ndcg_at_k",
+    "oracle_precision_at_k",
+    "oracle_recall_at_k",
+    "oracle_f1_at_k",
+    "oracle_hit_rate_at_k",
+    "oracle_ndcg_at_k",
+)
+
+
+def aggregate_metric_bundle(rows, k) -> dict:
+    """Average per-user bundles and compute mean(metric)/mean(oracle_metric) ratios.
+
+    The ratio aggregation is intentionally mean-of-mean, not mean-of-per-user-ratio.
+    See the spec for the rationale (avoids overweighting users with tiny oracle
+    denominators when interpreting 'fraction of oracle ceiling reached').
+    """
+    sums = {key: [row[key] for row in rows] for key in _BUNDLE_KEYS}
+    agg: dict = {"n_eval_users": len(rows), "k": k}
+    for key in _BUNDLE_KEYS:
+        agg[key] = _mean_or_none(sums[key])
+    agg["precision_oracle_ratio_at_k"] = _ratio_or_none(
+        agg["precision_at_k"], agg["oracle_precision_at_k"]
+    )
+    agg["recall_oracle_ratio_at_k"] = _ratio_or_none(
+        agg["recall_at_k"], agg["oracle_recall_at_k"]
+    )
+    agg["f1_oracle_ratio_at_k"] = _ratio_or_none(
+        agg["f1_at_k"], agg["oracle_f1_at_k"]
+    )
+    return agg
+
+
 def compute_user_metric_bundle(recommended, relevant, k) -> dict | None:
     """Compute the full audit bundle for one user. Returns None if no relevant items.
 
