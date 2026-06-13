@@ -454,3 +454,32 @@ def test_train_only_and_graph_overrides_require_graph():
         ev.main(["--dataset", "tiny", "--graph-num-negatives", "4", "--quiet"])
     with pytest.raises(SystemExit):
         ev.main(["--dataset", "tiny", "--graph-weight-decay", "1e-5", "--quiet"])
+
+
+def test_evaluate_models_emits_audit_fields_and_split_protocol():
+    table = evaluate_models(
+        {"fixed": FixedScore()},
+        TRAIN,
+        TEST,
+        META,
+        k=2,
+        min_rating_relevant=4.0,
+        num_negatives=2,
+        seed=42,
+        split_protocol="per_user_chronological_80_20",
+    )
+
+    assert isinstance(table, pd.DataFrame)
+    expected_columns = {
+        "dataset", "model", "rmse", "mae",
+        "precision_at_k", "recall_at_k", "f1_at_k",
+        "hit_rate_at_k", "ndcg_at_k",
+        "oracle_precision_at_k", "oracle_recall_at_k", "oracle_f1_at_k",
+        "oracle_hit_rate_at_k", "oracle_ndcg_at_k",
+        "precision_oracle_ratio_at_k", "recall_oracle_ratio_at_k",
+        "f1_oracle_ratio_at_k",
+        "k", "split_protocol", "n_eval_users",
+        "max_eval_users", "max_test_rows",
+    }
+    assert expected_columns.issubset(set(table.columns))
+    assert (table["split_protocol"] == "per_user_chronological_80_20").all()
