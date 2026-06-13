@@ -218,6 +218,42 @@ budget. LightGCN remains the stronger graph ranker.
 
 `metrics.json` and embeddings under `data/processed/` are local, reproducible artifacts and are **not** committed.
 
+## Evaluation Audit
+
+Because the 80/20 chronological split on `video_games` leaves a median of one
+relevant test item per ranking user, raw P@10 is structurally capped: oracle
+P@10 is only 0.1552 and oracle F1@10 is 0.2551. We therefore report HitRate@10,
+NDCG@10, and oracle-normalized P/R/F1@10 alongside the raw metrics. The split
+protocol is `per_user_chronological_80_20`; `leave_last_out` results, when
+present, are reported in a separate row with the protocol labeled.
+
+### Oracle ceiling — `video_games` 80/20
+
+| Cohort | oracle P@10 | oracle R@10 | oracle F1@10 | oracle HR@10 | oracle NDCG@10 |
+|---|---:|---:|---:|---:|---:|
+| `video_games / 80/20 / 79,248u` | 0.1552 | 0.9990 | 0.2551 | 1.0000 | 1.0000 |
+
+Oracle `HR@10` and `NDCG@10` are sentinel `1.0` whenever the user has at least
+one relevant test item.
+
+### Audit metrics (`video_games`, sampled-candidate @10)
+
+Computed on the same sampled-candidate ranking protocol as the existing
+checkpoint table above. Cells marked `—` are not measured for this branch.
+
+| Model | HitRate@10 | NDCG@10 | P/oracleP | R/oracleR | F1/oracleF1 |
+|---|---:|---:|---:|---:|---:|
+| popularity | — | — | — | — | — |
+| svd | — | — | — | — | — |
+| content_enriched | — | — | — | — | — |
+| calibrated_hybrid | — | — | — | — | — |
+| LightGCN 40ep / neg4 / wd1e-5 | — | — | — | — | — |
+| GraphSAGE MSE 20ep | — | — | — | — | — |
+| GraphSAGE-BPR 20ep / neg4 / no_sentiment | — | — | — | — | — |
+
+We do not compare raw F1@10 across projects or datasets unless the
+candidate-sampling and split protocols match.
+
 ## Graph Recommender Models (LightGCN + GraphSAGE)
 
 The graph models extend the comparison table with PyTorch Geometric–backed
