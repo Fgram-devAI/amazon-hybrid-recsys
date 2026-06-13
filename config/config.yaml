@@ -31,9 +31,13 @@ preprocessing:
   min_rating_relevant: 4.0 # rating >= this counts as "relevant" for Precision/Recall@K
   test_size: 0.2
   random_seed: 42
+  split_protocol: per_user_chronological_80_20  # creates artifacts; alt: leave_last_out
+  dedup_policy: latest                          # latest|first timestamp per (user_id, parent_asin); ties stable
 
 evaluation:
-  k: 10                    # the K in Precision@K / Recall@K / F1@K
+  k: 10                                         # kept for backward compatibility with existing callers
+  k_values: [10]                                # K=5 reachable via this key, not exercised in this branch
+  split_protocol: per_user_chronological_80_20  # records/reads; falls back when eda_summary.json lacks the field
 
 hybrid:
   alpha: 0.5

@@ -24,3 +24,28 @@ def test_dataset_k_core_prefers_per_dataset_override_then_global():
     # dense dataset with no override falls back to the global core
     cfg["active_dataset"] = "video_games"
     assert dataset_k_core(cfg) == 5
+
+
+def test_config_has_preprocessing_split_protocol_with_default(tmp_path):
+    cfg = load_config("config/config.yaml")
+    assert cfg["preprocessing"]["split_protocol"] == "per_user_chronological_80_20"
+
+
+def test_config_has_preprocessing_dedup_policy_with_latest_default():
+    cfg = load_config("config/config.yaml")
+    assert cfg["preprocessing"]["dedup_policy"] == "latest"
+
+
+def test_config_has_evaluation_k_values_default_10():
+    cfg = load_config("config/config.yaml")
+    assert cfg["evaluation"]["k_values"] == [10]
+
+
+def test_config_has_evaluation_split_protocol_fallback():
+    cfg = load_config("config/config.yaml")
+    assert cfg["evaluation"]["split_protocol"] == "per_user_chronological_80_20"
+
+
+def test_config_evaluation_k_is_still_present_for_backward_compat():
+    cfg = load_config("config/config.yaml")
+    assert cfg["evaluation"]["k"] == 10
