@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from src.evaluation.metrics import (
+    compute_user_metric_bundle,
     hit_rate_at_k,
     mae,
     ndcg_at_k,
@@ -140,3 +141,45 @@ def test_oracle_ndcg_sentinel_one_when_relevant_exists():
 
 def test_oracle_ndcg_none_when_no_relevant():
     assert oracle_ndcg_at_k(relevant_count=0) is None
+
+
+# ---------------------------------------------------------------------------
+# compute_user_metric_bundle
+# ---------------------------------------------------------------------------
+
+
+def test_compute_user_metric_bundle_one_hit_at_rank_2():
+    # recommended=[a,b,c,d], relevant={b}, K=4
+    # P = 1/4, R = 1/1 = 1.0, F1 = 2*0.25*1/(1.25) = 0.4
+    # HR = 1.0
+    # NDCG = (1/log2(3)) / 1.0
+    # oracle: relevant_count=1 -> oracle_P=1/4, oracle_R=1, oracle_F1 = 2*0.25*1/1.25 = 0.4
+    bundle = compute_user_metric_bundle(["a", "b", "c", "d"], {"b"}, k=4)
+    assert bundle["precision_at_k"] == pytest.approx(0.25)
+    assert bundle["recall_at_k"] == pytest.approx(1.0)
+    assert bundle["f1_at_k"] == pytest.approx(0.4)
+    assert bundle["hit_rate_at_k"] == 1.0
+    assert bundle["ndcg_at_k"] == pytest.approx(1.0 / math.log2(3))
+    assert bundle["oracle_precision_at_k"] == pytest.approx(0.25)
+    assert bundle["oracle_recall_at_k"] == pytest.approx(1.0)
+    assert bundle["oracle_f1_at_k"] == pytest.approx(0.4)
+    assert bundle["oracle_hit_rate_at_k"] == 1.0
+    assert bundle["oracle_ndcg_at_k"] == 1.0
+
+
+def test_compute_user_metric_bundle_returns_none_when_no_relevant():
+    assert compute_user_metric_bundle(["a", "b"], set(), k=2) is None
+
+
+def test_compute_user_metric_bundle_zero_hits_records_zeros():
+    bundle = compute_user_metric_bundle(["a", "b"], {"x", "y"}, k=2)
+    assert bundle is not None
+    assert bundle["precision_at_k"] == 0.0
+    assert bundle["recall_at_k"] == 0.0
+    assert bundle["f1_at_k"] == 0.0
+    assert bundle["hit_rate_at_k"] == 0.0
+    assert bundle["ndcg_at_k"] == 0.0
+    # oracle is still the ceiling for this user (2 relevant items, K=2 -> P=1, R=1)
+    assert bundle["oracle_precision_at_k"] == pytest.approx(1.0)
+    assert bundle["oracle_recall_at_k"] == pytest.approx(1.0)
+    assert bundle["oracle_f1_at_k"] == pytest.approx(1.0)

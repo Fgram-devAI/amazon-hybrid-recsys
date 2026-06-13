@@ -103,3 +103,35 @@ def oracle_ndcg_at_k(relevant_count) -> float | None:
     if relevant_count == 0:
         return None
     return 1.0
+
+
+def compute_user_metric_bundle(recommended, relevant, k) -> dict | None:
+    """Compute the full audit bundle for one user. Returns None if no relevant items.
+
+    Keys follow the existing evaluator schema: precision_at_k, recall_at_k,
+    f1_at_k plus the new audit fields hit_rate_at_k, ndcg_at_k, and the
+    per-user oracle ceilings. Aggregation into oracle_ratio_* columns is the
+    aggregator's job (see aggregate_metric_bundle).
+    """
+    relevant = set(relevant)
+    if not relevant:
+        return None
+    prf = precision_recall_f1_at_k(recommended, relevant, k)
+    if prf is None:
+        return None
+    precision, recall, f1 = prf
+    oracle_prf = oracle_precision_recall_f1_at_k(len(relevant), k)
+    assert oracle_prf is not None  # guarded by len(relevant) > 0 above
+    o_p, o_r, o_f = oracle_prf
+    return {
+        "precision_at_k": precision,
+        "recall_at_k": recall,
+        "f1_at_k": f1,
+        "hit_rate_at_k": hit_rate_at_k(recommended, relevant, k),
+        "ndcg_at_k": ndcg_at_k(recommended, relevant, k),
+        "oracle_precision_at_k": o_p,
+        "oracle_recall_at_k": o_r,
+        "oracle_f1_at_k": o_f,
+        "oracle_hit_rate_at_k": 1.0,
+        "oracle_ndcg_at_k": 1.0,
+    }
