@@ -436,7 +436,11 @@ def main(argv=None):
     if args.graph_feature_set is not None and not args.graph:
         parser.error("--graph-feature-set requires --graph or --graph-only")
 
-    from src.evaluation._audit_shared import processed_dataset_key, resolve_split_protocol
+    from src.evaluation._audit_shared import (
+        processed_dataset_key,
+        requested_split_protocol,
+        resolve_split_protocol,
+    )
 
     config = load_config(args.config)
     if args.graph_epochs is not None:
@@ -445,8 +449,9 @@ def main(argv=None):
         config.setdefault("graph", {})["num_negatives"] = args.graph_num_negatives
     if args.graph_weight_decay is not None:
         config.setdefault("graph", {})["weight_decay"] = args.graph_weight_decay
+    split_config = {"split_protocol": requested_split_protocol(config)}
     split_protocol = resolve_split_protocol(
-        config["processed_dir"], args.dataset, config["evaluation"]
+        config["processed_dir"], args.dataset, split_config
     )
     artifact_dataset = processed_dataset_key(args.dataset, split_protocol)
     train, test, metadata = _load_processed(config["processed_dir"], artifact_dataset)

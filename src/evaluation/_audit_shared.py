@@ -14,6 +14,14 @@ from src.evaluation.metrics import aggregate_metric_bundle, compute_user_metric_
 DEFAULT_SPLIT_PROTOCOL = "per_user_chronological_80_20"
 
 
+def requested_split_protocol(config) -> str:
+    """Return the split protocol the current config intends to evaluate."""
+    preprocessing_split = config.get("preprocessing", {}).get("split_protocol")
+    if preprocessing_split and preprocessing_split != DEFAULT_SPLIT_PROTOCOL:
+        return str(preprocessing_split)
+    return str(config.get("evaluation", {}).get("split_protocol", DEFAULT_SPLIT_PROTOCOL))
+
+
 def processed_dataset_key(dataset_key: str, split_protocol: str) -> str:
     """Return the processed artifact directory key for a split protocol."""
     if split_protocol == DEFAULT_SPLIT_PROTOCOL:

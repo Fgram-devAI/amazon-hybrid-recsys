@@ -12,6 +12,7 @@ from src.data.config import load_config
 from src.evaluation._audit_shared import (
     compute_checkpoint_audit_metrics,
     processed_dataset_key,
+    requested_split_protocol,
     resolve_split_protocol,
 )
 from src.evaluation.evaluate import _load_processed, sample_negatives
@@ -108,8 +109,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
+    split_config = {"split_protocol": requested_split_protocol(config)}
     split_protocol = resolve_split_protocol(
-        config["processed_dir"], args.dataset, config["evaluation"]
+        config["processed_dir"], args.dataset, split_config
     )
     artifact_dataset = processed_dataset_key(args.dataset, split_protocol)
     train, test, _ = _load_processed(config["processed_dir"], artifact_dataset)

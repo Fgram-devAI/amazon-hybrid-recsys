@@ -7,6 +7,7 @@ import pytest
 from src.evaluation._audit_shared import (
     compute_checkpoint_audit_metrics,
     processed_dataset_key,
+    requested_split_protocol,
     resolve_split_protocol,
 )
 
@@ -42,6 +43,22 @@ def test_processed_dataset_key_adds_non_default_suffix_once():
         processed_dataset_key("video_games__leave_last_out", "leave_last_out")
         == "video_games__leave_last_out"
     )
+
+
+def test_requested_split_protocol_prefers_non_default_preprocessing_split():
+    config = {
+        "preprocessing": {"split_protocol": "leave_last_out"},
+        "evaluation": {"split_protocol": "per_user_chronological_80_20"},
+    }
+    assert requested_split_protocol(config) == "leave_last_out"
+
+
+def test_requested_split_protocol_uses_evaluation_when_preprocessing_default():
+    config = {
+        "preprocessing": {"split_protocol": "per_user_chronological_80_20"},
+        "evaluation": {"split_protocol": "leave_last_out"},
+    }
+    assert requested_split_protocol(config) == "leave_last_out"
 
 
 def test_resolve_split_protocol_falls_back_to_config(tmp_path):
