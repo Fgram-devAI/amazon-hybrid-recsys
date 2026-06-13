@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.data_loader import DashboardData, load_dashboard_data
+from app.data_loader import DashboardData, load_dashboard_data, _normalize_metric_keys
 
 
 REPO_DEMO_DIR = Path(__file__).resolve().parents[2] / "app" / "assets" / "demo"
@@ -124,3 +124,35 @@ def test_graph_subgraph_3d_is_capped_and_has_coordinates() -> None:
         assert node_required.issubset(node.keys())
     for edge in payload["edges"]:
         assert edge_required.issubset(edge.keys())
+
+
+# --- _normalize_metric_keys ---
+
+
+def test_normalize_metric_keys_renames_evaluator_native_keys() -> None:
+    """Evaluator-native keys are mapped to app display keys."""
+    row = {"model": "svd", "rmse": 1.1, "mae": 0.8, "precision_at_k": 0.05, "recall_at_k": 0.3, "f1_at_k": 0.08}
+    result = _normalize_metric_keys(row)
+    assert "p_at_10" in result
+    assert "r_at_10" in result
+    assert "f1_at_10" in result
+    assert "precision_at_k" not in result
+    assert "recall_at_k" not in result
+    assert "f1_at_k" not in result
+    assert result["p_at_10"] == 0.05
+    assert result["r_at_10"] == 0.3
+    assert result["f1_at_10"] == 0.08
+
+
+def test_normalize_metric_keys_leaves_app_native_keys_unchanged() -> None:
+    """Rows already using app-native keys are returned as-is."""
+    row = {"model": "content", "rmse": 1.2, "mae": 0.9, "p_at_10": 0.07, "r_at_10": 0.5, "f1_at_10": 0.12}
+    result = _normalize_metric_keys(row)
+    assert result == row
+
+
+def test_normalize_metric_keys_unaffected_when_no_metric_keys_present() -> None:
+    """Rows with no ranking keys are returned unchanged."""
+    row = {"model": "random", "rmse": 1.25, "mae": 0.97}
+    result = _normalize_metric_keys(row)
+    assert result == row

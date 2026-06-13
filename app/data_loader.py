@@ -28,6 +28,24 @@ class DashboardData:
     notes: list[str] = field(default_factory=list)
 
 
+_EVAL_KEY_MAP = {
+    "precision_at_k": "p_at_10",
+    "recall_at_k": "r_at_10",
+    "f1_at_k": "f1_at_10",
+}
+
+
+def _normalize_metric_keys(row: dict[str, Any]) -> dict[str, Any]:
+    """Map evaluator-native ranking keys to app display keys; no-op if already normalized."""
+    if not any(k in row for k in _EVAL_KEY_MAP):
+        return row
+    out = dict(row)
+    for src, dst in _EVAL_KEY_MAP.items():
+        if src in out:
+            out[dst] = out.pop(src)
+    return out
+
+
 def _read_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -98,6 +116,17 @@ def load_dashboard_data(
     assert isinstance(eda, dict)
     assert isinstance(metrics, dict)
     assert isinstance(sample_items, list)
+
+    tables = metrics.get("tables", {})
+    if isinstance(tables, dict):
+        metrics = {
+            **metrics,
+            "tables": {
+                name: [_normalize_metric_keys(row) for row in rows]
+                for name, rows in tables.items()
+                if isinstance(rows, list)
+            },
+        }
 
     return DashboardData(
         dataset=dataset,

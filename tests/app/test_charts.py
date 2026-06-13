@@ -62,6 +62,26 @@ def test_preprocessing_funnel_orders_steps_and_uses_k_label() -> None:
     assert df.iloc[-1]["step"] == "After 5-core"
 
 
+def test_metrics_table_with_evaluator_native_keys_after_normalization() -> None:
+    """After _normalize_metric_keys runs, metrics_table renders P@10/R@10/F1@10."""
+    from app.data_loader import _normalize_metric_keys
+
+    raw_rows = [
+        {
+            "model": "lightgcn",
+            "rmse": 1.25,
+            "mae": 0.96,
+            "precision_at_k": 0.088,
+            "recall_at_k": 0.576,
+            "f1_at_k": 0.145,
+        }
+    ]
+    normalized = [_normalize_metric_keys(r) for r in raw_rows]
+    df = metrics_table(normalized)
+    assert set(df.columns) >= {"P@10", "R@10", "F1@10"}
+    assert df.iloc[0]["P@10"] == 0.088
+
+
 def test_metric_columns_constant_has_all_five_keys() -> None:
     assert METRIC_COLUMNS == ["rmse", "mae", "p_at_10", "r_at_10", "f1_at_10"]
 
