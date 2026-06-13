@@ -72,3 +72,34 @@ def ndcg_at_k(recommended, relevant, k) -> float | None:
     if ideal_dcg == 0.0:
         return 0.0
     return dcg / ideal_dcg
+
+
+def oracle_precision_recall_f1_at_k(
+    relevant_count, k
+) -> tuple[float, float, float] | None:
+    """Oracle P/R/F1@K: an optimal ranker places min(K, |relevant|) hits in top-K.
+
+    Returns None if relevant_count == 0 (matches the live metric contract).
+    """
+    if relevant_count == 0:
+        return None
+    hits = min(k, relevant_count)
+    precision = hits / k
+    recall = hits / relevant_count
+    denom = precision + recall
+    f1 = 0.0 if denom == 0 else 2 * precision * recall / denom
+    return precision, recall, f1
+
+
+def oracle_hit_rate_at_k(relevant_count) -> float | None:
+    """1.0 sentinel whenever a relevant item exists; None otherwise."""
+    if relevant_count == 0:
+        return None
+    return 1.0
+
+
+def oracle_ndcg_at_k(relevant_count) -> float | None:
+    """1.0 sentinel whenever a relevant item exists; None otherwise."""
+    if relevant_count == 0:
+        return None
+    return 1.0

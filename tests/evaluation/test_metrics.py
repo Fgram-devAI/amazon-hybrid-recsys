@@ -9,6 +9,9 @@ from src.evaluation.metrics import (
     hit_rate_at_k,
     mae,
     ndcg_at_k,
+    oracle_hit_rate_at_k,
+    oracle_ndcg_at_k,
+    oracle_precision_recall_f1_at_k,
     precision_recall_f1_at_k,
     relevant_items_by_user,
     rmse,
@@ -95,3 +98,45 @@ def test_ndcg_at_k_no_hits_returns_zero():
 
 def test_ndcg_at_k_none_when_no_relevant_items():
     assert ndcg_at_k(["a", "b"], set(), k=2) is None
+
+
+# ---------------------------------------------------------------------------
+# oracle ceiling functions
+# ---------------------------------------------------------------------------
+
+
+def test_oracle_pr_f1_single_relevant_item_k10():
+    # 1 relevant, K=10: oracle_hits = 1; P = 1/10, R = 1/1, F1 = 2*0.1/(1.1)
+    p, r, f = oracle_precision_recall_f1_at_k(relevant_count=1, k=10)
+    assert p == pytest.approx(0.1)
+    assert r == pytest.approx(1.0)
+    assert f == pytest.approx(2 * 0.1 * 1.0 / (0.1 + 1.0))
+
+
+def test_oracle_pr_f1_more_relevant_than_k():
+    # 15 relevant, K=10: oracle_hits = 10; P = 1.0, R = 10/15, F1 from harmonic mean
+    p, r, f = oracle_precision_recall_f1_at_k(relevant_count=15, k=10)
+    assert p == pytest.approx(1.0)
+    assert r == pytest.approx(10 / 15)
+    assert f == pytest.approx(2 * 1.0 * (10 / 15) / (1.0 + 10 / 15))
+
+
+def test_oracle_pr_f1_returns_none_when_no_relevant():
+    assert oracle_precision_recall_f1_at_k(relevant_count=0, k=10) is None
+
+
+def test_oracle_hit_rate_sentinel_one_when_relevant_exists():
+    assert oracle_hit_rate_at_k(relevant_count=1) == 1.0
+    assert oracle_hit_rate_at_k(relevant_count=42) == 1.0
+
+
+def test_oracle_hit_rate_none_when_no_relevant():
+    assert oracle_hit_rate_at_k(relevant_count=0) is None
+
+
+def test_oracle_ndcg_sentinel_one_when_relevant_exists():
+    assert oracle_ndcg_at_k(relevant_count=1) == 1.0
+
+
+def test_oracle_ndcg_none_when_no_relevant():
+    assert oracle_ndcg_at_k(relevant_count=0) is None
