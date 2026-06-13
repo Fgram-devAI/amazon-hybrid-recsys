@@ -15,10 +15,13 @@ import pandas as pd
 from tqdm import tqdm
 
 from src.data.config import load_config
+from src.evaluation._audit_shared import (
+    compute_checkpoint_audit_metrics,
+    resolve_split_protocol,
+)
 from src.evaluation.evaluate import _load_processed, sample_negatives
 from src.evaluation.metrics import (
     mae,
-    precision_recall_f1_at_k,
     relevant_items_by_user,
     rmse,
 )
@@ -39,6 +42,7 @@ def evaluate_fitted_graphsage(
     max_eval_users: int | None,
     max_test_rows: int | None,
     progress: bool,
+    split_protocol: str = "per_user_chronological_80_20",
 ) -> pd.DataFrame:
     rating_test = test
     if max_test_rows is not None and len(test) > max_test_rows:
@@ -71,7 +75,7 @@ def evaluate_fitted_graphsage(
         user: set(items) for user, items in train.groupby("user_id")["parent_asin"]
     }
 
-    precisions, recalls, f1s = [], [], []
+    per_user_data = []
     rng = np.random.default_rng(seed)
     if progress:
         print(
@@ -89,26 +93,21 @@ def evaluate_fitted_graphsage(
         exclude = user_train_items.get(user, set()) | rel
         negatives = sample_negatives(all_items, exclude, num_negatives, rng)
         ranked = model.recommend(user, k, candidates=list(rel) + negatives)
-        result = precision_recall_f1_at_k(ranked, rel, k)
-        if result is None:
+        if not rel:
             continue
-        p, r, f = result
-        precisions.append(p)
-        recalls.append(r)
-        f1s.append(f)
+        per_user_data.append({"ranked": ranked, "relevant": rel})
 
-    return pd.DataFrame([{
+    audit = compute_checkpoint_audit_metrics(per_user_data, k=k, split_protocol=split_protocol)
+    metrics: dict = {
         "dataset": dataset,
         "model": "graphsage_checkpoint",
         "rmse": rmse(y_true, y_pred),
         "mae": mae(y_true, y_pred),
-        "precision_at_k": float(np.mean(precisions)) if precisions else None,
-        "recall_at_k": float(np.mean(recalls)) if recalls else None,
-        "f1_at_k": float(np.mean(f1s)) if f1s else None,
-        "n_eval_users": len(precisions),
-        "max_eval_users": max_eval_users,
-        "max_test_rows": max_test_rows,
-    }])
+    }
+    metrics.update(audit)
+    metrics["max_eval_users"] = max_eval_users
+    metrics["max_test_rows"] = max_test_rows
+    return pd.DataFrame([metrics])
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -174,6 +173,9 @@ def main(argv: list[str] | None = None) -> None:
             flush=True,
         )
 
+    split_protocol = resolve_split_protocol(
+        config["processed_dir"], args.dataset, config["evaluation"]
+    )
     table = evaluate_fitted_graphsage(
         model,
         train,
@@ -186,6 +188,7 @@ def main(argv: list[str] | None = None) -> None:
         max_eval_users=args.max_eval_users,
         max_test_rows=args.max_test_rows,
         progress=progress,
+        split_protocol=split_protocol,
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)
