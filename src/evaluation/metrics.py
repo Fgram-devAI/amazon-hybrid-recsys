@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -43,3 +45,30 @@ def relevant_items_by_user(test_df, min_rating_relevant) -> dict:
         user: set(items)
         for user, items in rel.groupby("user_id")["parent_asin"]
     }
+
+
+def hit_rate_at_k(recommended, relevant, k) -> float | None:
+    """1.0 if any of the top-K items is relevant, else 0.0. None if no relevant items."""
+    relevant = set(relevant)
+    if not relevant:
+        return None
+    top_k = list(recommended)[:k]
+    return 1.0 if any(item in relevant for item in top_k) else 0.0
+
+
+def ndcg_at_k(recommended, relevant, k) -> float | None:
+    """Binary-relevance NDCG@K. None if no relevant items, 0.0 if no hits in top-K."""
+    relevant = set(relevant)
+    if not relevant:
+        return None
+    top_k = list(recommended)[:k]
+    dcg = sum(
+        1.0 / math.log2(rank + 1)
+        for rank, item in enumerate(top_k, start=1)
+        if item in relevant
+    )
+    n_ideal = min(k, len(relevant))
+    ideal_dcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, n_ideal + 1))
+    if ideal_dcg == 0.0:
+        return 0.0
+    return dcg / ideal_dcg
