@@ -17,10 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import streamlit as st
+import streamlit as st  # noqa: E402
 
-from app import charts
-from app.data_loader import DashboardData, load_dashboard_data
+from app import charts  # noqa: E402
+from app.data_loader import DashboardData, load_dashboard_data  # noqa: E402
 
 
 def render() -> None:

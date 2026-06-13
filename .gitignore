@@ -5,6 +5,8 @@
 *.json.gz
 *.csv
 !experiments/results.csv
+!/app/assets/demo/
+!/app/assets/demo/*.json
 
 # --- Models / artifacts ---
 /models/

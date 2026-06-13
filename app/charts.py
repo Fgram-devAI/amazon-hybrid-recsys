@@ -11,6 +11,8 @@ import pandas as pd
 import plotly.graph_objects as go
 
 METRIC_COLUMNS = ["rmse", "mae", "p_at_10", "r_at_10", "f1_at_10"]
+GRAPH_3D_NODE_CAP = 300
+GRAPH_3D_EDGE_CAP = 2_000
 METRIC_LABELS = {
     "rmse": "RMSE",
     "mae": "MAE",
@@ -45,15 +47,28 @@ def preprocessing_funnel(eda: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def graph_subgraph_3d_figure(payload: dict[str, Any]) -> go.Figure:
-    nodes = payload.get("nodes", [])
-    edges = payload.get("edges", [])
+def graph_subgraph_3d_figure(
+    payload: dict[str, Any],
+    *,
+    node_cap: int = GRAPH_3D_NODE_CAP,
+    edge_cap: int = GRAPH_3D_EDGE_CAP,
+) -> go.Figure:
+    raw_nodes = payload.get("nodes", [])
+    raw_edges = payload.get("edges", [])
+    nodes = sorted(
+        raw_nodes,
+        key=lambda node: float(node.get("degree", 0)),
+        reverse=True,
+    )[:node_cap]
     node_by_id = {node["id"]: node for node in nodes}
 
     edge_x: list[float | None] = []
     edge_y: list[float | None] = []
     edge_z: list[float | None] = []
-    for edge in edges:
+    kept_edges = 0
+    for edge in raw_edges:
+        if kept_edges >= edge_cap:
+            break
         source = node_by_id.get(edge.get("source"))
         target = node_by_id.get(edge.get("target"))
         if not source or not target:
@@ -61,6 +76,7 @@ def graph_subgraph_3d_figure(payload: dict[str, Any]) -> go.Figure:
         edge_x.extend([source["x"], target["x"], None])
         edge_y.extend([source["y"], target["y"], None])
         edge_z.extend([source["z"], target["z"], None])
+        kept_edges += 1
 
     edge_trace = go.Scatter3d(
         x=edge_x,
@@ -93,6 +109,14 @@ def graph_subgraph_3d_figure(payload: dict[str, Any]) -> go.Figure:
     fig.update_layout(
         height=620,
         margin={"l": 0, "r": 0, "t": 20, "b": 0},
+        title=_graph_cap_title(
+            len(raw_nodes),
+            len(raw_edges),
+            len(nodes),
+            kept_edges,
+            node_cap,
+            edge_cap,
+        ),
         scene={
             "xaxis": {"visible": False},
             "yaxis": {"visible": False},
@@ -101,3 +125,20 @@ def graph_subgraph_3d_figure(payload: dict[str, Any]) -> go.Figure:
         showlegend=False,
     )
     return fig
+
+
+def _graph_cap_title(
+    raw_node_count: int,
+    raw_edge_count: int,
+    shown_node_count: int,
+    shown_edge_count: int,
+    node_cap: int,
+    edge_cap: int,
+) -> str:
+    if raw_node_count <= node_cap and raw_edge_count <= edge_cap:
+        return "Largest Louvain community sample"
+    return (
+        "Largest Louvain community sample "
+        f"(showing {shown_node_count}/{raw_node_count} nodes, "
+        f"{shown_edge_count}/{raw_edge_count} edges)"
+    )

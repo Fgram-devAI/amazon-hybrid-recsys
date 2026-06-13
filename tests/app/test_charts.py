@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from app.charts import (
+    GRAPH_3D_EDGE_CAP,
+    GRAPH_3D_NODE_CAP,
     METRIC_COLUMNS,
     graph_subgraph_3d_figure,
     metrics_table,
@@ -92,3 +94,35 @@ def test_graph_subgraph_3d_figure_handles_small_payload() -> None:
     }
     fig = graph_subgraph_3d_figure(payload)
     assert len(list(fig.data)) == 2
+
+
+def test_graph_subgraph_3d_figure_caps_large_payload() -> None:
+    nodes = [
+        {
+            "id": f"N{i}",
+            "label": f"Node {i}",
+            "category": "Games",
+            "community": 1,
+            "degree": i,
+            "x": float(i),
+            "y": float(i % 10),
+            "z": float(i % 7),
+        }
+        for i in range(GRAPH_3D_NODE_CAP + 50)
+    ]
+    edges = [
+        {
+            "source": f"N{i % GRAPH_3D_NODE_CAP}",
+            "target": f"N{(i + 1) % GRAPH_3D_NODE_CAP}",
+            "weight": 0.1,
+        }
+        for i in range(GRAPH_3D_EDGE_CAP + 500)
+    ]
+
+    fig = graph_subgraph_3d_figure({"nodes": nodes, "edges": edges})
+    figure_json = fig.to_plotly_json()
+    edge_trace, node_trace = figure_json["data"]
+
+    assert len(node_trace["x"]) == GRAPH_3D_NODE_CAP
+    assert len(edge_trace["x"]) <= GRAPH_3D_EDGE_CAP * 3
+    assert "showing" in str(fig.layout.title.text)

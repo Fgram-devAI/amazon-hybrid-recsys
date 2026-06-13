@@ -452,12 +452,21 @@ top of the metrics/EDA artifacts produced by the offline pipeline.
 streamlit run app/streamlit_app.py
 ```
 
+Tabs:
+
+- Overview
+- Model Comparison
+- Graph Models + Ablations
+- Graph EDA / Communities
+- Item Explorer
+
 The app runs in two modes:
 
 - **Full local mode** — when `data/processed/<dataset>/eda_summary.json` exists,
   the dashboard reads the user's locally generated EDA, metrics, graph-analysis,
-  and metadata artifacts. Run the standard preprocessing/evaluation/graph
-  commands first to populate them.
+  and metadata artifacts where available. Individual missing optional artifacts
+  fall back to the bundled demo summaries with a banner note. Run the standard
+  preprocessing/evaluation/graph commands first to populate local artifacts.
 - **Bundled demo mode** — on a fresh clone with no local processed data, the
   dashboard falls back to a small curated bundle under `app/assets/demo/`.
   Numeric values in the demo bundle are copied verbatim from this README, so
@@ -470,10 +479,14 @@ The app runs in two modes:
     streamlit run app/streamlit_app.py
   ```
 
+`RECSYS_DEMO_DIR` can point the loader at an alternate demo bundle; by default it
+uses `app/assets/demo`.
+
 The dashboard never trains models, recomputes embeddings, runs graph community
 detection, or downloads raw data — it only reads previously generated artifacts.
 The Graph EDA tab includes a 2D projection summary and a capped 3D sample from
-the largest Louvain community; the full graph layout is never computed in the app.
+the largest Louvain community. The 3D figure applies runtime caps before
+rendering, and the full graph layout is never computed in the app.
 
 ## Roadmap
 
