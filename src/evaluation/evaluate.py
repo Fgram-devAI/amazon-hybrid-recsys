@@ -7,7 +7,13 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .metrics import mae, precision_recall_f1_at_k, relevant_items_by_user, rmse
+from .metrics import (
+    aggregate_metric_bundle,
+    compute_user_metric_bundle,
+    mae,
+    relevant_items_by_user,
+    rmse,
+)
 
 
 def sample_negatives(all_items, exclude, n, rng):
@@ -54,7 +60,8 @@ def sample_negatives(all_items, exclude, n, rng):
 def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                     num_negatives, seed, dataset="(fixture)", max_eval_users=None,
                     max_test_rows=None, progress=False, checkpoint_dir=None,
-                    metrics_path=None, checkpoint_tag=None, train_only=False):
+                    metrics_path=None, checkpoint_tag=None, train_only=False,
+                    split_protocol="per_user_chronological_80_20"):
     """Fit each model and return a metrics DataFrame (one row per model)."""
     rating_test = test
     relevant = {}
@@ -130,7 +137,7 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                 flush=True,
             )
 
-        precisions, recalls, f1s = [], [], []
+        per_user_bundles = []
         rng = np.random.default_rng(seed)  # reset per model -> same candidate sets
         if progress:
             print(f"[{dataset}] ranking candidates for {name} ...", flush=True)
@@ -146,13 +153,10 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
             negatives = sample_negatives(all_items, exclude, num_negatives, rng)
             candidates = list(rel) + negatives
             ranked = model.recommend(user, k, candidates=candidates)
-            result = precision_recall_f1_at_k(ranked, rel, k)
-            if result is None:
+            bundle = compute_user_metric_bundle(ranked, rel, k)
+            if bundle is None:
                 continue
-            p, r, f = result
-            precisions.append(p)
-            recalls.append(r)
-            f1s.append(f)
+            per_user_bundles.append(bundle)
         if progress:
             print(
                 f"[{dataset}] ranking metrics for {name} done in "
@@ -160,20 +164,19 @@ def evaluate_models(models, train, test, metadata, *, k, min_rating_relevant,
                 flush=True,
             )
 
-        rows.append(
-            {
-                "dataset": dataset,
-                "model": name,
-                "rmse": rmse(y_true, y_pred),
-                "mae": mae(y_true, y_pred),
-                "precision_at_k": float(np.mean(precisions)) if precisions else None,
-                "recall_at_k": float(np.mean(recalls)) if recalls else None,
-                "f1_at_k": float(np.mean(f1s)) if f1s else None,
-                "n_eval_users": len(precisions),
-                "max_eval_users": max_eval_users,
-                "max_test_rows": max_test_rows,
-            }
-        )
+        aggregated = aggregate_metric_bundle(per_user_bundles, k=k)
+        row = {
+            "dataset": dataset,
+            "model": name,
+            "rmse": rmse(y_true, y_pred),
+            "mae": mae(y_true, y_pred),
+            "split_protocol": split_protocol,
+            "max_eval_users": max_eval_users,
+            "max_test_rows": max_test_rows,
+        }
+        row.update(aggregated)  # adds precision_at_k, recall_at_k, f1_at_k, hit_rate_at_k,
+                                # ndcg_at_k, oracle_*, *_oracle_ratio_at_k, k, n_eval_users
+        rows.append(row)
         if metrics_path is not None:
             path = Path(metrics_path)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,6 +436,12 @@ def main(argv=None):
     if args.graph_feature_set is not None and not args.graph:
         parser.error("--graph-feature-set requires --graph or --graph-only")
 
+    from src.evaluation._audit_shared import (
+        processed_dataset_key,
+        requested_split_protocol,
+        resolve_split_protocol,
+    )
+
     config = load_config(args.config)
     if args.graph_epochs is not None:
         config.setdefault("graph", {})["epochs"] = args.graph_epochs
@@ -440,7 +449,12 @@ def main(argv=None):
         config.setdefault("graph", {})["num_negatives"] = args.graph_num_negatives
     if args.graph_weight_decay is not None:
         config.setdefault("graph", {})["weight_decay"] = args.graph_weight_decay
-    train, test, metadata = _load_processed(config["processed_dir"], args.dataset)
+    split_config = {"split_protocol": requested_split_protocol(config)}
+    split_protocol = resolve_split_protocol(
+        config["processed_dir"], args.dataset, split_config
+    )
+    artifact_dataset = processed_dataset_key(args.dataset, split_protocol)
+    train, test, metadata = _load_processed(config["processed_dir"], artifact_dataset)
     if not args.quiet:
         print(
             f"[{args.dataset}] loaded train={len(train):,}, test={len(test):,}, "
@@ -467,7 +481,7 @@ def main(argv=None):
         from src.models.weighted_hybrid import WeightedHybrid
 
         tuning = config["hybrid"].get("tuning", {})
-        cache_dir = Path(config["processed_dir"]) / args.dataset / "embeddings"
+        cache_dir = Path(config["processed_dir"]) / artifact_dataset / "embeddings"
 
         def _factory(alpha_val: float):
             return WeightedHybrid(
@@ -492,7 +506,7 @@ def main(argv=None):
             print(f"[{args.dataset}] tuned alpha={chosen_alpha} from scores={result.scores}", flush=True)
 
     models = build_models(
-        config, args.dataset, embedder,
+        config, artifact_dataset, embedder,
         no_knn=args.no_knn,
         advanced=args.advanced,
         alpha=chosen_alpha,
@@ -516,7 +530,7 @@ def main(argv=None):
         }
         print(f"[{args.dataset}] graph model devices: {graph_devices}", flush=True)
 
-    out_dir = Path(config["processed_dir"]) / args.dataset
+    out_dir = Path(config["processed_dir"]) / artifact_dataset
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_filename = (
         f"metrics_{args.checkpoint_tag}.json"
@@ -538,11 +552,12 @@ def main(argv=None):
         max_eval_users=args.max_eval_users,
         max_test_rows=args.max_test_rows,
         progress=not args.quiet,
-        checkpoint_dir=Path(config["processed_dir"]) / args.dataset / "graph_checkpoints"
+        checkpoint_dir=Path(config["processed_dir"]) / artifact_dataset / "graph_checkpoints"
         if args.graph else None,
         metrics_path=metrics_path,
         checkpoint_tag=args.checkpoint_tag,
         train_only=args.train_only,
+        split_protocol=split_protocol,
     )
 
     if not args.train_only:

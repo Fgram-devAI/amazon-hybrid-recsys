@@ -14,6 +14,7 @@ from .interactions import (
     apply_k_core,
     deduplicate_interactions,
     load_interactions,
+    split_leave_last_out,
     split_per_user,
 )
 from .load import read_jsonl_gz
@@ -28,6 +29,17 @@ def _test_items_not_in_train(train, test):
     return int(len(set(test["parent_asin"]) - set(train["parent_asin"])))
 
 
+def _split_dir_suffix(split_protocol: str) -> str:
+    """Return the output directory suffix for a given split protocol.
+
+    The default 80/20 protocol writes to the plain ``<dataset_key>/`` directory
+    (no suffix) so that existing downstream code keeps working unchanged.
+    Every other protocol gets its own sibling directory to avoid clobbering
+    the baseline artifacts.
+    """
+    return "" if split_protocol == "per_user_chronological_80_20" else f"__{split_protocol}"
+
+
 def preprocess_dataset(config, *, limit=None):
     """Run the full pipeline for the active dataset; return the EDA summary dict."""
     category = active_dataset_category(config)
@@ -36,13 +48,20 @@ def preprocess_dataset(config, *, limit=None):
     review_path = resolve_existing(review_path)
     meta_path = resolve_existing(meta_path)
     pp = config["preprocessing"]
+    split_protocol = pp.get("split_protocol", "per_user_chronological_80_20")
+    dedup_policy = pp.get("dedup_policy", "latest")
 
     interactions, raw_count = load_interactions(read_jsonl_gz(review_path, limit=limit))
     valid_count = len(interactions)
-    deduped = deduplicate_interactions(interactions)
+    deduped = deduplicate_interactions(interactions, policy=dedup_policy)
     k_core = dataset_k_core(config)
     kcore = apply_k_core(deduped, k_core)
-    train, test = split_per_user(kcore, pp["test_size"], pp["random_seed"])
+
+    validation = None
+    if split_protocol == "leave_last_out":
+        train, validation, test = split_leave_last_out(kcore)
+    else:
+        train, test = split_per_user(kcore, pp["test_size"], pp["random_seed"])
 
     metadata = prepare_metadata(read_jsonl_gz(meta_path, limit=limit))
     keep_items = set(kcore["parent_asin"].unique())
@@ -52,17 +71,27 @@ def preprocess_dataset(config, *, limit=None):
         raw_count, valid_count, deduped, kcore, train, test, pp["min_rating_relevant"]
     )
     summary["k_core_applied"] = k_core
+    summary["split_protocol"] = split_protocol
+    summary["dedup_policy"] = dedup_policy
     summary["test_items_not_in_train"] = _test_items_not_in_train(train, test)
     summary["metadata_items"] = len(metadata)
     summary["metadata_missingness"] = {
         col: float(metadata[col].mean()) for col in _MISSING_FLAGS if col in metadata
     }
+    # Make the train/test totals interpretable when the split mode produces a
+    # validation set. summarize_eda only sees train+test, so without this field
+    # a leave_last_out summary would silently undercount the cohort.
+    if validation is not None:
+        summary["validation_interactions"] = int(len(validation))
+        summary["train_test_counts_exclude_validation"] = True
 
-    out_dir = Path(config["processed_dir"]) / dataset_key
+    out_dir = Path(config["processed_dir"]) / f"{dataset_key}{_split_dir_suffix(split_protocol)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     kcore.to_parquet(out_dir / "interactions.parquet", index=False)
     train.to_parquet(out_dir / "train.parquet", index=False)
     test.to_parquet(out_dir / "test.parquet", index=False)
+    if validation is not None:
+        validation.to_parquet(out_dir / "validation.parquet", index=False)
     metadata.to_parquet(out_dir / "metadata.parquet", index=False)
     (out_dir / "eda_summary.json").write_text(json.dumps(summary, indent=2))
     return summary

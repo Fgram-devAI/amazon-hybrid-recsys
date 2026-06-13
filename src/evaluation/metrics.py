@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -42,4 +44,141 @@ def relevant_items_by_user(test_df, min_rating_relevant) -> dict:
     return {
         user: set(items)
         for user, items in rel.groupby("user_id")["parent_asin"]
+    }
+
+
+def hit_rate_at_k(recommended, relevant, k) -> float | None:
+    """1.0 if any of the top-K items is relevant, else 0.0. None if no relevant items."""
+    relevant = set(relevant)
+    if not relevant:
+        return None
+    top_k = list(recommended)[:k]
+    return 1.0 if any(item in relevant for item in top_k) else 0.0
+
+
+def ndcg_at_k(recommended, relevant, k) -> float | None:
+    """Binary-relevance NDCG@K. None if no relevant items, 0.0 if no hits in top-K."""
+    relevant = set(relevant)
+    if not relevant:
+        return None
+    top_k = list(recommended)[:k]
+    dcg = sum(
+        1.0 / math.log2(rank + 1)
+        for rank, item in enumerate(top_k, start=1)
+        if item in relevant
+    )
+    n_ideal = min(k, len(relevant))
+    ideal_dcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, n_ideal + 1))
+    if ideal_dcg == 0.0:
+        return 0.0
+    return dcg / ideal_dcg
+
+
+def oracle_precision_recall_f1_at_k(
+    relevant_count, k
+) -> tuple[float, float, float] | None:
+    """Oracle P/R/F1@K: an optimal ranker places min(K, |relevant|) hits in top-K.
+
+    Returns None if relevant_count == 0 (matches the live metric contract).
+    """
+    if relevant_count == 0:
+        return None
+    hits = min(k, relevant_count)
+    precision = hits / k
+    recall = hits / relevant_count
+    denom = precision + recall
+    f1 = 0.0 if denom == 0 else 2 * precision * recall / denom
+    return precision, recall, f1
+
+
+def oracle_hit_rate_at_k(relevant_count) -> float | None:
+    """1.0 sentinel whenever a relevant item exists; None otherwise."""
+    if relevant_count == 0:
+        return None
+    return 1.0
+
+
+def oracle_ndcg_at_k(relevant_count) -> float | None:
+    """1.0 sentinel whenever a relevant item exists; None otherwise."""
+    if relevant_count == 0:
+        return None
+    return 1.0
+
+
+def _mean_or_none(values):
+    return float(sum(values) / len(values)) if values else None
+
+
+def _ratio_or_none(numer, denom):
+    if numer is None or denom is None or denom == 0.0:
+        return None
+    return numer / denom
+
+
+_BUNDLE_KEYS = (
+    "precision_at_k",
+    "recall_at_k",
+    "f1_at_k",
+    "hit_rate_at_k",
+    "ndcg_at_k",
+    "oracle_precision_at_k",
+    "oracle_recall_at_k",
+    "oracle_f1_at_k",
+    "oracle_hit_rate_at_k",
+    "oracle_ndcg_at_k",
+)
+
+
+def aggregate_metric_bundle(rows, k) -> dict:
+    """Average per-user bundles and compute mean(metric)/mean(oracle_metric) ratios.
+
+    The ratio aggregation is intentionally mean-of-mean, not mean-of-per-user-ratio.
+    See the spec for the rationale (avoids overweighting users with tiny oracle
+    denominators when interpreting 'fraction of oracle ceiling reached').
+    """
+    sums = {key: [row[key] for row in rows] for key in _BUNDLE_KEYS}
+    agg: dict = {"n_eval_users": len(rows), "k": k}
+    for key in _BUNDLE_KEYS:
+        agg[key] = _mean_or_none(sums[key])
+    agg["precision_oracle_ratio_at_k"] = _ratio_or_none(
+        agg["precision_at_k"], agg["oracle_precision_at_k"]
+    )
+    agg["recall_oracle_ratio_at_k"] = _ratio_or_none(
+        agg["recall_at_k"], agg["oracle_recall_at_k"]
+    )
+    agg["f1_oracle_ratio_at_k"] = _ratio_or_none(
+        agg["f1_at_k"], agg["oracle_f1_at_k"]
+    )
+    return agg
+
+
+def compute_user_metric_bundle(recommended, relevant, k) -> dict | None:
+    """Compute the full audit bundle for one user. Returns None if no relevant items.
+
+    Keys follow the existing evaluator schema: precision_at_k, recall_at_k,
+    f1_at_k plus the new audit fields hit_rate_at_k, ndcg_at_k, and the
+    per-user oracle ceilings. Aggregation into oracle_ratio_* columns is the
+    aggregator's job (see aggregate_metric_bundle).
+    """
+    relevant = set(relevant)
+    if not relevant:
+        return None
+    prf = precision_recall_f1_at_k(recommended, relevant, k)
+    if prf is None:
+        return None
+    precision, recall, f1 = prf
+    oracle_prf = oracle_precision_recall_f1_at_k(len(relevant), k)
+    assert oracle_prf is not None  # guarded by len(relevant) > 0 above
+    o_p, o_r, o_f = oracle_prf
+    return {
+        "precision_at_k": precision,
+        "recall_at_k": recall,
+        "f1_at_k": f1,
+        "hit_rate_at_k": hit_rate_at_k(recommended, relevant, k),
+        "ndcg_at_k": ndcg_at_k(recommended, relevant, k),
+        "oracle_precision_at_k": o_p,
+        "oracle_recall_at_k": o_r,
+        "oracle_f1_at_k": o_f,
+        "oracle_hit_rate_at_k": 1.0,
+        "oracle_ndcg_at_k": 1.0,
     }
