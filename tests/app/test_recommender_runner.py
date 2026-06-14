@@ -8,16 +8,19 @@ import math
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from app.recommender_runner import (
     DEFAULT_CANDIDATE_POOL_SIZE,
     EMPTY_ROW_FIELDS,
+    KNN_SIM_NAMES,
     LocalArtifacts,
     _metadata_lookup,
     _normalize_categories,
     build_candidate_pool,
     load_local_artifacts,
     representative_users,
+    run_knn,
     run_popularity,
     run_svd,
     seen_items_for_user,
@@ -300,3 +303,49 @@ def test_run_svd_uses_injected_factory_and_excludes_seen() -> None:
     assert rows[0]["svd_score"] is not None
     assert rows[0]["popularity_score"] is None
     assert rows[0]["score_sources"] == ["svd"]
+
+
+class _FakeKNN:
+    def __init__(self, sim_name: str) -> None:
+        self.sim_name = sim_name
+
+    def fit(self, train):
+        return self
+
+    def predict(self, user_id, parent_asin):
+        # Deterministic per-asin score.
+        return float(ord(str(parent_asin)[-1]) % 5) + 1.0
+
+
+def test_knn_sim_names_match_spec() -> None:
+    assert KNN_SIM_NAMES == ("cosine", "pearson", "msd")
+
+
+@pytest.mark.parametrize("sim_name", ["cosine", "pearson", "msd"])
+def test_run_knn_returns_rows_for_each_sim_name(sim_name: str) -> None:
+    rows = run_knn(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=2,
+        sim_name=sim_name,
+        candidate_pool_size=10,
+        knn_factory=_FakeKNN,
+    )
+    asins = [r["parent_asin"] for r in rows]
+    assert "A" not in asins and "B" not in asins
+    assert rows[0]["method"] == f"knn_{sim_name}"
+    assert rows[0]["knn_score"] is not None
+    assert rows[0]["score_sources"] == ["knn"]
+
+
+def test_run_knn_rejects_unknown_sim_name() -> None:
+    with pytest.raises(ValueError):
+        run_knn(
+            train=_toy_train(),
+            metadata=_toy_metadata(),
+            user_id="u1",
+            top_k=2,
+            sim_name="bogus",
+            knn_factory=_FakeKNN,
+        )

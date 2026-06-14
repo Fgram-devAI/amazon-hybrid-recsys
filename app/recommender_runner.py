@@ -349,3 +349,65 @@ def run_svd(
         _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
         rows.append(row)
     return rows
+
+
+KNN_SIM_NAMES: tuple[str, ...] = ("cosine", "pearson", "msd")
+
+
+def _default_knn_factory(sim_name: str):
+    from src.models.cf import KNNRecommender
+
+    return KNNRecommender(k=40, sim_name=sim_name, user_based=False)
+
+
+def run_knn(
+    *,
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    user_id: str,
+    top_k: int,
+    sim_name: str,
+    candidate_pool_size: int = DEFAULT_CANDIDATE_POOL_SIZE,
+    seed_asin: str | None = None,
+    knn_factory: Callable | None = None,
+) -> list[dict]:
+    """Fit Item-KNN with the requested similarity, rank unseen items by predicted rating."""
+    if sim_name not in KNN_SIM_NAMES:
+        raise ValueError(
+            f"sim_name={sim_name!r} not in {KNN_SIM_NAMES}; "
+            "use 'cosine', 'pearson', or 'msd'."
+        )
+    if train.empty:
+        return []
+    factory = knn_factory or _default_knn_factory
+    seen = seen_items_for_user(train, user_id=user_id)
+    pool = build_candidate_pool(
+        train=train,
+        metadata=metadata,
+        seen=seen,
+        pool_size=candidate_pool_size,
+        seed_asin=seed_asin,
+    )
+    if not pool:
+        return []
+
+    model = factory(sim_name)
+    model.fit(train)
+
+    meta = _metadata_lookup(metadata)
+    scored = [(asin, float(model.predict(user_id, asin))) for asin in pool]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+
+    rows: list[dict] = []
+    for rank, (asin, score) in enumerate(scored[: int(top_k)], start=1):
+        row = _empty_row()
+        row.update(
+            {
+                "method": f"knn_{sim_name}",
+                "knn_score": float(score),
+                "score_sources": ["knn"],
+            }
+        )
+        _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
+        rows.append(row)
+    return rows
