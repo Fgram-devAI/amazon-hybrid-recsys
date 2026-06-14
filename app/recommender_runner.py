@@ -411,3 +411,90 @@ def run_knn(
         _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
         rows.append(row)
     return rows
+
+
+@dataclass
+class LightGCNResult:
+    rows: list[dict]
+    warning: str | None = None
+
+
+def run_lightgcn_checkpoint(
+    *,
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    user_id: str,
+    top_k: int,
+    checkpoint_path: Path,
+    loader: Callable | None = None,
+    config: dict | None = None,
+    candidate_pool_size: int = DEFAULT_CANDIDATE_POOL_SIZE,
+    seed_asin: str | None = None,
+) -> LightGCNResult:
+    """Score unseen items with a LightGCN checkpoint.
+
+    Returns a warning string instead of raising when the checkpoint is missing,
+    the loader fails, or no pool item is known to the model. Callers display
+    the warning in the Streamlit UI; never crash on missing artifacts.
+    """
+    if not Path(checkpoint_path).is_file():
+        return LightGCNResult(
+            rows=[],
+            warning=(
+                f"LightGCN checkpoint not found at {checkpoint_path}. Train one with "
+                "`./.venv/bin/python -m src.evaluation.evaluate --graph-only "
+                "--only-model lightgcn --train-only` (see README)."
+            ),
+        )
+    if loader is None:
+        from src.reasoning.candidates import load_lightgcn_from_checkpoint as _real_loader
+
+        loader = _real_loader
+
+    try:
+        scorer = loader(Path(checkpoint_path), train, config or {})
+    except Exception as exc:
+        return LightGCNResult(rows=[], warning=f"Failed to load LightGCN checkpoint: {exc}")
+
+    seen = seen_items_for_user(train, user_id=user_id)
+    pool = build_candidate_pool(
+        train=train,
+        metadata=metadata,
+        seen=seen,
+        pool_size=candidate_pool_size,
+        seed_asin=seed_asin,
+    )
+    if not pool:
+        return LightGCNResult(rows=[], warning=None)
+
+    meta = _metadata_lookup(metadata)
+    scored: list[tuple[str, float]] = []
+    for asin in pool:
+        score = scorer(user_id, asin)
+        if score is None:
+            continue
+        scored.append((asin, float(score)))
+
+    if not scored:
+        return LightGCNResult(
+            rows=[],
+            warning=(
+                "LightGCN checkpoint loaded but no items in the candidate pool "
+                "were known to the model."
+            ),
+        )
+
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    rows: list[dict] = []
+    for rank, (asin, score) in enumerate(scored[: int(top_k)], start=1):
+        row = _empty_row()
+        row.update(
+            {
+                "method": "lightgcn",
+                "lightgcn_score": float(score),
+                "score_sources": ["lightgcn"],
+            }
+        )
+        _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
+        rows.append(row)
+    return LightGCNResult(rows=rows, warning=None)

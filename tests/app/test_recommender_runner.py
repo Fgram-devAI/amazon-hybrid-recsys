@@ -14,6 +14,7 @@ from app.recommender_runner import (
     DEFAULT_CANDIDATE_POOL_SIZE,
     EMPTY_ROW_FIELDS,
     KNN_SIM_NAMES,
+    LightGCNResult,
     LocalArtifacts,
     _metadata_lookup,
     _normalize_categories,
@@ -21,6 +22,7 @@ from app.recommender_runner import (
     load_local_artifacts,
     representative_users,
     run_knn,
+    run_lightgcn_checkpoint,
     run_popularity,
     run_svd,
     seen_items_for_user,
@@ -349,3 +351,73 @@ def test_run_knn_rejects_unknown_sim_name() -> None:
             sim_name="bogus",
             knn_factory=_FakeKNN,
         )
+
+
+class _FakeLightGCNScorer:
+    def __init__(self, mapping: dict[str, float]) -> None:
+        self._mapping = mapping
+
+    def __call__(self, user_id: str, parent_asin: str):
+        return self._mapping.get(parent_asin)
+
+
+def test_run_lightgcn_checkpoint_uses_loader_and_returns_rows(tmp_path) -> None:
+    ckpt = tmp_path / "lightgcn.pt"
+    ckpt.write_bytes(b"fake")
+
+    def fake_loader(path, train, config):
+        assert path == ckpt
+        return _FakeLightGCNScorer({"C": 4.5, "D": 4.2})
+
+    result = run_lightgcn_checkpoint(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=2,
+        checkpoint_path=ckpt,
+        loader=fake_loader,
+        config={},
+    )
+    assert isinstance(result, LightGCNResult)
+    assert result.warning is None
+    asins = [r["parent_asin"] for r in result.rows]
+    assert asins == ["C", "D"]
+    assert result.rows[0]["lightgcn_score"] == 4.5
+    assert result.rows[0]["method"] == "lightgcn"
+    assert result.rows[0]["score_sources"] == ["lightgcn"]
+
+
+def test_run_lightgcn_checkpoint_warns_when_file_missing(tmp_path) -> None:
+    ckpt = tmp_path / "missing.pt"
+    result = run_lightgcn_checkpoint(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=2,
+        checkpoint_path=ckpt,
+        loader=None,
+        config={},
+    )
+    assert result.rows == []
+    assert result.warning is not None
+    assert "missing.pt" in result.warning
+
+
+def test_run_lightgcn_checkpoint_catches_loader_exceptions(tmp_path) -> None:
+    ckpt = tmp_path / "lightgcn.pt"
+    ckpt.write_bytes(b"fake")
+
+    def broken_loader(path, train, config):
+        raise RuntimeError("corrupt checkpoint")
+
+    result = run_lightgcn_checkpoint(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=2,
+        checkpoint_path=ckpt,
+        loader=broken_loader,
+        config={},
+    )
+    assert result.rows == []
+    assert "corrupt checkpoint" in (result.warning or "")
