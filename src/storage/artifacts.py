@@ -57,6 +57,12 @@ def load_vector_artifacts(
 
     meta_path = chosen / "embedding_meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta_dim = meta.get("dim")
+    if meta_dim is not None and int(meta_dim) != int(embeddings.shape[1]):
+        raise ValueError(
+            f"embedding_meta.json dim ({int(meta_dim)}) does not match "
+            f"embeddings columns ({int(embeddings.shape[1])}) at {chosen}"
+        )
     return VectorArtifacts(
         item_ids=[str(x) for x in item_ids],
         embeddings=embeddings,

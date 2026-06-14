@@ -74,3 +74,19 @@ def test_load_vector_artifacts_raises_when_no_path_exists(tmp_path: Path):
             dataset_key="video_games",
             embedding_subdir="advanced_features/title_desc_embeddings",
         )
+
+
+def test_load_vector_artifacts_raises_when_meta_dim_mismatches(tmp_path: Path):
+    advanced = tmp_path / "video_games" / "advanced_features" / "title_desc_embeddings"
+    _write_artifacts(advanced, n_items=3, dim=8)
+    # Overwrite embedding_meta.json with a wrong dim.
+    (advanced / "embedding_meta.json").write_text(
+        json.dumps({"dim": 16, "model_name": "fake-embedder", "row_count": 3})
+    )
+
+    with pytest.raises(ValueError, match="dim"):
+        load_vector_artifacts(
+            processed_dir=tmp_path,
+            dataset_key="video_games",
+            embedding_subdir="advanced_features/title_desc_embeddings",
+        )
