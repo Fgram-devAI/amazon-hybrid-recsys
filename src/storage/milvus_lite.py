@@ -63,6 +63,8 @@ class MilvusLiteStore:
         output_fields: list[str],
     ) -> list[dict[str, Any]]:
         """Top-K cosine search, returning the requested metadata fields per hit."""
+        # Milvus Lite releases collections between sessions; load before querying.
+        self._client.load_collection(collection_name=name)
         result = self._client.search(
             collection_name=name,
             data=[query_vector],
