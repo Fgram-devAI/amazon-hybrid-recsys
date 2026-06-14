@@ -42,3 +42,13 @@ skills-lock.json
 # --- Graph recommender artefacts (weights, checkpoints — never committed) ---
 /data/processed/**/graph_checkpoints/
 /data/processed/**/graph_features/
+
+# --- Retrieval storage (feat/storage-vector-graph-dbs) ---
+# Milvus Lite DB files (binary)
+/data/storage/
+# Smoke-query outputs (JSON/CSV)
+/data/processed/**/storage_queries/
+# Default Neo4j volume mount
+/docker/neo4j-data/
+# Never commit real Neo4j password
+.env

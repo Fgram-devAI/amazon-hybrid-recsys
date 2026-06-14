@@ -35,6 +35,13 @@ def test_filter_drops_generic_roots_and_empty_keeps_informative():
     assert filter_categories(raw, generic_roots=generic) == ["Comedy", "Drama"]
 
 
+def test_filter_treats_flattened_category_string_as_one_path():
+    raw = "Video Games Xbox One Accessories Faceplates, Protectors & Skins"
+    assert filter_categories(raw, generic_roots=["Video Games"]) == [
+        "Xbox One Accessories Faceplates, Protectors & Skins"
+    ]
+
+
 def test_filter_is_order_preserving_and_deduplicated():
     raw = ["Comedy", "Drama", "Comedy", "Drama"]
     assert filter_categories(raw, generic_roots=[]) == ["Comedy", "Drama"]
