@@ -18,6 +18,11 @@ torch_geometric>=2.6,<3.0  # LightGCN + SAGEConv built-ins; CPU/MPS on darwin ar
 # Graph EDA + community/spectral analysis (feat/graph-eda-community)
 networkx>=3.3,<4.0      # built-in louvain_communities, bipartite utilities
 
+# Retrieval storage (feat/storage-vector-graph-dbs)
+pymilvus>=2.4,<3.0     # Milvus Lite client (local *.db file, no Docker required)
+neo4j>=6.2,<7.0        # Official Python driver (driver 6.x supports Neo4j 5 server via Bolt)
+python-dotenv>=1.0,<2.0  # Load NEO4J_PASSWORD from .env without committing secrets
+
 # Optional graph extras — install manually if you want Leiden / faster spectral:
 #   pip install leidenalg python-igraph pyamg
 # leidenalg / python-igraph: stronger modularity refinement than Louvain
