@@ -457,19 +457,21 @@ What it computes:
 
 Video_Games graph-analysis summary:
 
-| Projection | Items | Edges | Largest CC | Louvain modularity | Louvain purity | Louvain NMI | Spectral k=50 NMI |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| min20 / top2000 | 2,000 | 2,611 | 572 | 0.757 | 0.784 | 0.681 | n/a |
-| min10 / top5000 | 5,000 | 12,349 | 1,797 | 0.779 | 0.738 | 0.637 | 0.496 |
-| min5 / top10000 | 10,000 | 51,477 | 4,755 | 0.744 | 0.663 | 0.603 | 0.325 |
-| min3 / top15000 | 15,000 | 156,541 | 9,800 | 0.698 | 0.534 | 0.550 | 0.184 |
-| min3 / full | 25,560 | 157,941 | 10,612 | 0.716 | 0.706 | 0.580 | 0.162 |
+| Projection | Items | Edges | Largest CC | Louvain modularity | Leiden modularity | Louvain purity | Louvain NMI | Spectral k=50 NMI |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| min20 / top2000 | 2,000 | 2,611 | 572 | 0.757 | n/a | 0.784 | 0.681 | n/a |
+| min10 / top5000 | 5,000 | 12,349 | 1,797 | 0.779 | n/a | 0.738 | 0.637 | 0.496 |
+| min5 / top10000 | 10,000 | 51,477 | 4,755 | 0.744 | n/a | 0.663 | 0.603 | 0.325 |
+| min3 / top15000 | 15,000 | 156,541 | 9,800 | 0.698 | n/a | 0.534 | 0.550 | 0.184 |
+| min3 / full | 25,560 | 157,941 | 10,612 | 0.716 | 0.718 | 0.706 | 0.580 | 0.162 |
 
 The projection tradeoff is intentional: stricter co-rating thresholds give
 smaller but cleaner communities, while broader/full projections improve catalog
 coverage and expose the long-tail fragmentation. Louvain is the most stable
-community method here; fixed-k spectral clustering is weaker on category
-alignment. Girvan-Newman is intentionally skipped on these full projections
+community method here; a later full run with `leidenalg` / `python-igraph`
+installed produced a very similar partition with slightly higher modularity
+(`0.718` vs `0.716` on `min3 / full`). Fixed-k spectral clustering is weaker on
+category alignment. Girvan-Newman is intentionally skipped on these full projections
 because it is only tractable for small subgraphs (`girvan_newman_max_nodes=500`);
 the report keeps the illustrative capped Louvain-community run separately as
 `girvan_newman_louvain_subgraph`. On the full Video_Games projection, that capped
@@ -536,6 +538,88 @@ detection, or downloads raw data — it only reads previously generated artifact
 The Graph EDA tab includes a 2D projection summary and a capped 3D sample from
 the largest Louvain community. The 3D figure applies runtime caps before
 rendering, and the full graph layout is never computed in the app.
+
+## Storage layer (Milvus Lite + Neo4j)
+
+This branch adds two **derived retrieval stores** built from the existing
+`data/processed/<dataset>/` artifacts. It ships no new recommender model and
+no LLM integration — it prepares the backend for the later
+`feat/llm-recommender-system` branch.
+
+- **Milvus Lite** stores dense item text embeddings for semantic retrieval.
+  It runs against a local `data/storage/milvus_assignment.db` file via
+  `pymilvus.MilvusClient` — no `etcd`/MinIO Docker stack required during
+  development. Full Milvus (`etcd` + MinIO) remains a possible
+  production-style follow-up.
+- **Neo4j Community** stores **train-only** user-item-category relationships
+  for graph evidence and explanations. Test ratings are never ingested.
+
+The later LLM recommender consumes both retrieval contexts but does not
+replace the measured recommender models.
+
+### Setup
+
+```bash
+# 1) Install new deps (pulls pymilvus, milvus-lite, neo4j, python-dotenv).
+./.venv/bin/python -m pip install -r requirements.txt
+
+# 2) Copy .env.example to .env and set the Neo4j password.
+cp .env.example .env
+
+# 3) Start Neo4j locally (Browser UI: http://localhost:7474).
+docker compose up -d neo4j
+```
+
+### Ingest item embeddings into Milvus Lite
+
+```bash
+./.venv/bin/python -m src.storage.ingest_vectors \
+  --dataset video_games --reset
+```
+
+Reads `data/processed/video_games/advanced_features/title_desc_embeddings/item_emb.npy`
+when present, otherwise falls back to `data/processed/video_games/embeddings/item_emb.npy`.
+
+### Semantic top-K search
+
+```bash
+./.venv/bin/python -m src.storage.search_vectors \
+  --dataset video_games \
+  --query "open world fantasy role playing game" \
+  --top-k 10
+```
+
+### Ingest train graph into Neo4j
+
+```bash
+./.venv/bin/python -m src.storage.ingest_neo4j \
+  --dataset video_games --reset
+```
+
+Creates `:User`, `:Item`, `:Category` nodes with uniqueness constraints,
+writes `:RATED` edges from the train split only (`r.split = 'train'`), and
+`:IN_CATEGORY` edges using the same filtered-category vocabulary as the
+advanced content models. Optional `:CO_RATED_WITH` edges are read from
+`data/processed/<dataset>/graph_analysis/co_rating_edges_min20_top2000.json`
+when `storage.co_rating_edges.enabled` is `true` in `config/config.yaml`.
+The default is `false`; when enabled but no exportable edges exist the
+ingester logs a warning and skips co-rating edges.
+
+### Graph smoke query
+
+```bash
+./.venv/bin/python -m src.storage.query_neo4j \
+  --dataset video_games \
+  --user-id <known_train_user_id> \
+  --top-k 10
+```
+
+### Generated files (gitignored)
+
+- `data/storage/milvus_assignment.db` — local Milvus Lite database file.
+- `docker/neo4j-data/` — Neo4j volume mount.
+- `.env` — local Neo4j password.
+- `data/processed/<dataset>/storage_queries/` — any JSON/CSV smoke outputs.
 
 ## Roadmap
 
