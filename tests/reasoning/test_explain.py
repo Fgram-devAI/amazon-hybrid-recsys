@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.reasoning.explain import run_explain
+from src.reasoning.explain import _display_payload, run_explain
 
 
 class _FakeEmbedder:
@@ -134,3 +134,31 @@ def test_run_explain_writes_output_when_path_provided(tmp_path: Path) -> None:
     assert out_path.exists()
     saved = json.loads(out_path.read_text())
     assert saved["mode"] == "dry_run"
+
+
+def test_display_payload_includes_prompt_and_evidence_for_dry_run() -> None:
+    result = {
+        "mode": "dry_run",
+        "effective_weights": {"popularity": 1.0},
+        "candidates": [{"parent_asin": "C1"}],
+        "llm": {"mode": "dry_run"},
+        "evidence_payloads": [{"candidate": {"parent_asin": "C1"}}],
+        "prompt": {"system": "S", "user": "U"},
+    }
+    payload = _display_payload(result)
+    assert payload["evidence_payloads"] == result["evidence_payloads"]
+    assert payload["prompt"] == result["prompt"]
+
+
+def test_display_payload_keeps_live_output_concise() -> None:
+    result = {
+        "mode": "live",
+        "effective_weights": {"popularity": 1.0},
+        "candidates": [{"parent_asin": "C1"}],
+        "llm": {"mode": "live", "text": "{}"},
+        "evidence_payloads": [{"candidate": {"parent_asin": "C1"}}],
+        "prompt": {"system": "S", "user": "U"},
+    }
+    payload = _display_payload(result)
+    assert "evidence_payloads" not in payload
+    assert "prompt" not in payload

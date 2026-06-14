@@ -81,6 +81,20 @@ class _UnusedAdapter:
         raise MissingApiKeyError("LLM adapter is not configured (dry-run path).")
 
 
+def _display_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Return the JSON payload printed to stdout."""
+    payload = {
+        "mode": result["mode"],
+        "effective_weights": result["effective_weights"],
+        "candidates": result["candidates"],
+        "llm": result["llm"],
+    }
+    if result["mode"] == "dry_run":
+        payload["evidence_payloads"] = result.get("evidence_payloads", [])
+        payload["prompt"] = result.get("prompt", {})
+    return payload
+
+
 def run_explain(
     *,
     user_id: str,
@@ -383,16 +397,7 @@ def main(argv: list[str] | None = None) -> int:
         if neo4j_store is not None:
             neo4j_store.close()
 
-    print(json.dumps(
-        {
-            "mode": result["mode"],
-            "effective_weights": result["effective_weights"],
-            "candidates": result["candidates"],
-            "llm": result["llm"],
-        },
-        default=str,
-        indent=2,
-    ))
+    print(json.dumps(_display_payload(result), default=str, indent=2))
     return 0
 
 
