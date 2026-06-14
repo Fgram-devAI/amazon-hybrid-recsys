@@ -114,3 +114,30 @@ storage:
     enabled: false
     source_report: graph_analysis/co_rating_edges_min20_top2000.json
     max_edges: 50000
+
+# ---------------------------------------------------------------------------
+# Reasoning layer (feat/llm-hybrid-recommender)
+# Combines SVD / LightGCN / Milvus / Neo4j evidence into a candidate list and
+# (optionally) an LLM explanation. Generated outputs under data/processed/...
+# /llm_outputs/ and /reasoning_queries/ are gitignored.
+# ---------------------------------------------------------------------------
+reasoning:
+  default_dataset: video_games
+  candidate_k: 50
+  final_k: 5
+  weights:
+    graph: 0.50
+    svd: 0.25
+    semantic: 0.15
+    popularity: 0.10
+  lightgcn_checkpoint: data/processed/video_games/graph_checkpoints/lightgcn_40ep_neg4_wd1e-5.pt
+  output_dir: data/processed/video_games/llm_outputs
+
+llm:
+  provider: groq
+  model: llama-3.3-70b-versatile
+  api_key_env: GROQ_API_KEY
+  base_url: https://api.groq.com/openai/v1
+  temperature: 0.2
+  max_tokens: 700
+  timeout_seconds: 30

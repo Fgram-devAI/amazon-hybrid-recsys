@@ -52,3 +52,7 @@ skills-lock.json
 /docker/neo4j-data/
 # Never commit real Neo4j password
 .env
+
+# --- Reasoning layer (feat/llm-hybrid-recommender) ---
+/data/processed/**/llm_outputs/
+/data/processed/**/reasoning_queries/
