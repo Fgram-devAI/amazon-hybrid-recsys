@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -216,3 +217,135 @@ def build_candidate_pool(
 
     combined = list(dict.fromkeys(seed_neighbors + popular + meta_asins))
     return combined[: max(int(pool_size), 1)]
+
+
+EMPTY_ROW_FIELDS: tuple[str, ...] = (
+    "rank",
+    "parent_asin",
+    "title",
+    "categories",
+    "method",
+    "hybrid_score",
+    "svd_score",
+    "knn_score",
+    "lightgcn_score",
+    "semantic_score",
+    "popularity_score",
+    "score_sources",
+    "already_seen",
+)
+
+
+def _empty_row() -> dict:
+    return {k: None for k in EMPTY_ROW_FIELDS}
+
+
+def _decorate_row(
+    row: dict,
+    *,
+    rank: int,
+    asin: str,
+    meta_lookup: dict[str, dict],
+) -> dict:
+    meta_entry = meta_lookup.get(asin, {"title": "", "categories": []})
+    row.update(
+        {
+            "rank": rank,
+            "parent_asin": asin,
+            "title": meta_entry["title"],
+            "categories": meta_entry["categories"],
+            "already_seen": False,
+        }
+    )
+    return row
+
+
+def run_popularity(
+    *,
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    user_id: str,
+    top_k: int,
+    seed_asin: str | None = None,
+) -> list[dict]:
+    """Rank unseen items by train interaction count."""
+    if train.empty:
+        return []
+    seen = seen_items_for_user(train, user_id=user_id)
+    exclude = set(seen)
+    if seed_asin:
+        exclude.add(str(seed_asin))
+    counts = (
+        train.loc[~train["parent_asin"].astype(str).isin(exclude), "parent_asin"]
+        .astype(str)
+        .value_counts()
+    )
+    if counts.empty:
+        return []
+    meta = _metadata_lookup(metadata)
+    rows: list[dict] = []
+    for rank, (asin, count) in enumerate(counts.head(int(top_k)).items(), start=1):
+        row = _empty_row()
+        row.update(
+            {
+                "method": "popularity",
+                "popularity_score": float(count),
+                "score_sources": ["popularity"],
+            }
+        )
+        _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
+        rows.append(row)
+    return rows
+
+
+def _default_svd_factory():
+    from src.models.cf import SVDRecommender
+
+    return SVDRecommender(n_factors=32, n_epochs=10, random_state=42)
+
+
+def run_svd(
+    *,
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    user_id: str,
+    top_k: int,
+    candidate_pool_size: int = DEFAULT_CANDIDATE_POOL_SIZE,
+    seed_asin: str | None = None,
+    svd_factory: Callable | None = None,
+) -> list[dict]:
+    """Fit SVD locally on ``train``, rank unseen items by predicted rating."""
+    if train.empty:
+        return []
+    factory = svd_factory or _default_svd_factory
+    seen = seen_items_for_user(train, user_id=user_id)
+    pool = build_candidate_pool(
+        train=train,
+        metadata=metadata,
+        seen=seen,
+        pool_size=candidate_pool_size,
+        seed_asin=seed_asin,
+    )
+    if not pool:
+        return []
+
+    model = factory()
+    model.fit(train)
+
+    meta = _metadata_lookup(metadata)
+    scored = [(asin, float(model.predict(user_id, asin))) for asin in pool]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+
+    rows: list[dict] = []
+    for rank, (asin, score) in enumerate(scored[: int(top_k)], start=1):
+        row = _empty_row()
+        row.update(
+            {
+                "method": "svd",
+                "svd_score": float(score),
+                "score_sources": ["svd"],
+            }
+        )
+        _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
+        rows.append(row)
+    return rows

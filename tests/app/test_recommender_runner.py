@@ -11,12 +11,15 @@ import pandas as pd
 
 from app.recommender_runner import (
     DEFAULT_CANDIDATE_POOL_SIZE,
+    EMPTY_ROW_FIELDS,
     LocalArtifacts,
     _metadata_lookup,
     _normalize_categories,
     build_candidate_pool,
     load_local_artifacts,
     representative_users,
+    run_popularity,
+    run_svd,
     seen_items_for_user,
     user_history_rows,
 )
@@ -230,3 +233,70 @@ def test_build_candidate_pool_handles_unknown_seed_gracefully() -> None:
     )
     assert isinstance(pool, list)
     assert len(pool) > 0
+
+
+def test_empty_row_fields_match_spec_contract() -> None:
+    required = {
+        "rank", "parent_asin", "title", "categories", "method",
+        "hybrid_score", "svd_score", "knn_score", "lightgcn_score",
+        "semantic_score", "popularity_score", "score_sources", "already_seen",
+    }
+    assert required == set(EMPTY_ROW_FIELDS)
+
+
+def test_run_popularity_returns_normalized_rows() -> None:
+    rows = run_popularity(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=3,
+    )
+    asins = [r["parent_asin"] for r in rows]
+    assert "A" not in asins and "B" not in asins
+    assert set(EMPTY_ROW_FIELDS).issubset(rows[0].keys())
+    assert rows[0]["method"] == "popularity"
+    assert rows[0]["already_seen"] is False
+    assert rows[0]["popularity_score"] is not None
+    assert rows[0]["score_sources"] == ["popularity"]
+    assert rows[0]["svd_score"] is None
+    assert rows[0]["lightgcn_score"] is None
+    assert rows[0]["title"]
+
+
+def test_run_popularity_returns_empty_when_no_unseen_items() -> None:
+    train = _toy_train()
+    rows = run_popularity(
+        train=train[train["user_id"] == "u1"],
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=5,
+    )
+    assert rows == []
+
+
+class _FakeSVD:
+    """Deterministic predict: rating depends only on parent_asin tail char."""
+
+    def fit(self, train):
+        self._fit_called = True
+        return self
+
+    def predict(self, user_id, parent_asin):
+        return float(ord(str(parent_asin)[-1]) % 5) + 1.0
+
+
+def test_run_svd_uses_injected_factory_and_excludes_seen() -> None:
+    rows = run_svd(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        user_id="u1",
+        top_k=3,
+        candidate_pool_size=10,
+        svd_factory=_FakeSVD,
+    )
+    asins = [r["parent_asin"] for r in rows]
+    assert "A" not in asins and "B" not in asins
+    assert rows[0]["method"] == "svd"
+    assert rows[0]["svd_score"] is not None
+    assert rows[0]["popularity_score"] is None
+    assert rows[0]["score_sources"] == ["svd"]
