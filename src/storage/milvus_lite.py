@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pymilvus import DataType, MilvusClient
 
@@ -17,7 +17,9 @@ class MilvusLiteStore:
         self._client = MilvusClient(uri=str(db_path))
 
     def has_collection(self, name: str) -> bool:
-        return self._client.has_collection(collection_name=name)
+        # pymilvus 2.6 sync MilvusClient has no return annotation; pyright infers
+        # the async overload return. Runtime is synchronous bool.
+        return cast(bool, self._client.has_collection(collection_name=name))
 
     def drop_collection(self, name: str) -> None:
         if self.has_collection(name):
