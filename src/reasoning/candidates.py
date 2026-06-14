@@ -5,8 +5,12 @@ Per-source scorers (SVD, LightGCN, popularity, semantic) and the top-level
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
+
+import pandas as pd
 
 
 def min_max_normalize(values: list[float | None]) -> list[float | None]:
@@ -59,3 +63,113 @@ def weighted_fuse(
         out["score_sources"] = sources
         fused.append(out)
     return fused
+
+
+@dataclass
+class PopularityScorer:
+    """Train-side interaction count per item. Score is the raw count."""
+
+    train: pd.DataFrame
+
+    def __post_init__(self) -> None:
+        self._counts = Counter(self.train["parent_asin"].astype(str).tolist())
+
+    def score(self, parent_asin: str) -> float:
+        return float(self._counts.get(str(parent_asin), 0))
+
+
+@dataclass
+class SemanticScorer:
+    """Wraps a Milvus hit list. Similarity = 1.0 - cosine distance, clipped to >= 0."""
+
+    hits: list[dict[str, Any]]
+
+    def __post_init__(self) -> None:
+        self._by_asin: dict[str, float] = {}
+        for hit in self.hits:
+            asin = str(hit.get("parent_asin", ""))
+            if not asin:
+                continue
+            distance = hit.get("distance")
+            if distance is None:
+                continue
+            sim = max(0.0, 1.0 - float(distance))
+            # Keep the closest (highest similarity) occurrence per parent_asin.
+            self._by_asin[asin] = max(self._by_asin.get(asin, 0.0), sim)
+
+    def score(self, parent_asin: str) -> float | None:
+        return self._by_asin.get(str(parent_asin))
+
+
+# Scorer callables for SVD / LightGCN are kept as plain Callables to avoid
+# pulling heavy model deps into this module's import surface.
+SvdScorer = Callable[[str, str], float | None]
+LightGCNScorerCallable = Callable[[str, str], float | None]
+
+
+def generate_candidates(
+    *,
+    user_id: str,
+    candidate_pool: list[str],
+    train: pd.DataFrame,
+    svd_scorer: SvdScorer | None,
+    lightgcn_scorer: LightGCNScorerCallable | None,
+    semantic_scorer: SemanticScorer | None,
+    popularity_scorer: PopularityScorer | None,
+    weights: Mapping[str, float],
+    final_k: int,
+) -> list[dict[str, Any]]:
+    """Build the hybrid candidate table, excluding the user's train items."""
+    seen = set(
+        train.loc[train["user_id"].astype(str) == str(user_id), "parent_asin"]
+        .astype(str)
+        .tolist()
+    )
+    fresh = [a for a in candidate_pool if a not in seen]
+
+    available: set[str] = set()
+    if lightgcn_scorer is not None:
+        available.add("graph")
+    if svd_scorer is not None:
+        available.add("svd")
+    if semantic_scorer is not None:
+        available.add("semantic")
+    if popularity_scorer is not None:
+        available.add("popularity")
+    effective_weights = redistribute_weights(weights, available=available)
+
+    raw_rows: list[dict[str, Any]] = []
+    raw_graph: list[float | None] = []
+    raw_svd: list[float | None] = []
+    raw_sem: list[float | None] = []
+    raw_pop: list[float | None] = []
+    for asin in fresh:
+        raw_graph.append(lightgcn_scorer(user_id, asin) if lightgcn_scorer else None)
+        raw_svd.append(svd_scorer(user_id, asin) if svd_scorer else None)
+        raw_sem.append(semantic_scorer.score(asin) if semantic_scorer else None)
+        raw_pop.append(popularity_scorer.score(asin) if popularity_scorer else None)
+        raw_rows.append({"parent_asin": asin})
+
+    norm_graph = min_max_normalize(raw_graph)
+    norm_svd = min_max_normalize(raw_svd)
+    norm_sem = min_max_normalize(raw_sem)
+    norm_pop = min_max_normalize(raw_pop)
+
+    for i, row in enumerate(raw_rows):
+        # Keep raw + normalized; raw is helpful for human inspection.
+        row["lightgcn_score"] = raw_graph[i]
+        row["svd_score"] = raw_svd[i]
+        row["semantic_score"] = raw_sem[i]
+        row["popularity_score"] = raw_pop[i]
+        if "graph" in effective_weights:
+            row["graph"] = norm_graph[i]
+        if "svd" in effective_weights:
+            row["svd"] = norm_svd[i]
+        if "semantic" in effective_weights:
+            row["semantic"] = norm_sem[i]
+        if "popularity" in effective_weights:
+            row["popularity"] = norm_pop[i]
+
+    fused = weighted_fuse(raw_rows, weights=effective_weights)
+    fused.sort(key=lambda r: r["hybrid_score"], reverse=True)
+    return fused[:final_k]
