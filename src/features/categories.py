@@ -48,9 +48,23 @@ def filter_categories(
         for g in generic_roots
         if (norm := normalize_category(g)) is not None
     }
+    values: Sequence[object]
+    if isinstance(raw, str):
+        norm_raw = normalize_category(raw)
+        if norm_raw is None:
+            return []
+        key_raw = norm_raw.casefold()
+        for root in sorted(generic, key=len, reverse=True):
+            prefix = f"{root} "
+            if key_raw.startswith(prefix):
+                norm_raw = norm_raw[len(prefix) :].strip()
+                break
+        values = [norm_raw]
+    else:
+        values = raw
     seen: set[str] = set()
     out: list[str] = []
-    for value in raw:
+    for value in values:
         norm = normalize_category(value)
         if norm is None:
             continue

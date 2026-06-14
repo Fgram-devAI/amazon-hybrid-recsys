@@ -12,7 +12,7 @@
 # (e.g. neo4j:5.20-community) and confirm with `docker manifest inspect`.
 services:
   neo4j:
-    image: neo4j:5-community
+    image: neo4j:5.20-community
     container_name: amazon_recsys_neo4j
     ports:
       - "7474:7474"   # HTTP / Browser

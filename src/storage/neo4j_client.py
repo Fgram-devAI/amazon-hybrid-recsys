@@ -36,11 +36,19 @@ class Neo4jStore:
     def ensure_constraints(self) -> None:
         with self._driver.session() as session:
             for stmt in _CONSTRAINT_STATEMENTS:
-                session.run(stmt)
+                session.run(stmt).consume()
 
-    def reset_database(self) -> None:
+    def reset_database(self, *, batch_size: int = 500) -> None:
         with self._driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
+            while True:
+                result = session.run(
+                    "MATCH (n) WITH n LIMIT $batch_size "
+                    "DETACH DELETE n RETURN count(n) AS deleted",
+                    batch_size=batch_size,
+                )
+                deleted = result.single(strict=True)["deleted"]
+                if deleted == 0:
+                    break
 
     def _write_batches(
         self, query: LiteralString, rows: Iterable[dict[str, Any]], batch_size: int
@@ -50,7 +58,7 @@ class Neo4jStore:
         with self._driver.session() as session:
             for start in range(0, len(rows), batch_size):
                 batch = rows[start : start + batch_size]
-                session.run(query, rows=batch)
+                session.run(query, rows=batch).consume()
                 total += len(batch)
         return total
 

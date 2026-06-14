@@ -46,6 +46,17 @@ def test_build_item_category_rows_drops_generic_roots():
     assert pairs == [("a", "Nintendo Switch")]
 
 
+def test_build_item_category_rows_does_not_split_flattened_strings_into_chars():
+    metadata = pd.DataFrame(
+        {
+            "parent_asin": ["a"],
+            "categories": ["Video Games Xbox One Accessories"],
+        }
+    )
+    rows = build_item_category_rows(metadata, generic_roots=["Video Games"])
+    assert rows == [{"parent_asin": "a", "category": "Xbox One Accessories"}]
+
+
 def test_build_rating_rows_uses_train_only_and_stamps_split_train():
     train = pd.DataFrame(
         {
