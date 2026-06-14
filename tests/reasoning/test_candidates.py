@@ -175,3 +175,37 @@ def test_generate_candidates_warns_when_a_source_is_none(caplog):
     for row in out:
         assert row["score_sources"] == ["popularity"]
         assert 0.0 <= row["hybrid_score"] <= 1.0
+
+
+def test_svd_scorer_wraps_recommender_predict():
+    from src.models.cf import SVDRecommender
+
+    train = _toy_train()
+    model = SVDRecommender(n_factors=4, n_epochs=2, random_state=42)
+    model.fit(train)
+    from src.reasoning.candidates import SVDScorer
+
+    scorer = SVDScorer(model)
+    s = scorer("U1", "C")
+    assert isinstance(s, float)
+    assert 1.0 <= s <= 5.0
+
+
+def test_lightgcn_scorer_returns_none_when_user_unknown():
+    """Unknown users must yield None, not the calibration fallback rating."""
+    from src.reasoning.candidates import LightGCNScorer
+
+    class _StubLightGCN:
+        def __init__(self):
+            self._graph = type(
+                "G",
+                (),
+                {"user_index": {"U1": 0}, "item_index": {"A": 0, "B": 1}},
+            )()
+
+        def predict(self, user, asin):  # pragma: no cover - not invoked here
+            return 4.0
+
+    scorer = LightGCNScorer(_StubLightGCN())
+    assert scorer("UNKNOWN", "A") is None
+    assert scorer("U1", "UNKNOWN_ITEM") is None

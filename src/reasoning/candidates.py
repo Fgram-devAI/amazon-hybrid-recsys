@@ -8,7 +8,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 
 import pandas as pd
 
@@ -173,3 +174,71 @@ def generate_candidates(
     fused = weighted_fuse(raw_rows, weights=effective_weights)
     fused.sort(key=lambda r: r["hybrid_score"], reverse=True)
     return fused[:final_k]
+
+
+class _LightGCNLike(Protocol):
+    _graph: Any
+
+    def predict(self, user_id: str, parent_asin: str, /) -> float: ...
+
+
+class LightGCNScorer:
+    """Thin wrapper: returns model.predict only when both user and item are known.
+
+    LightGCN's own predict() silently falls back to global/item means for
+    unknown users/items; that would pollute the graph score channel, so the
+    scorer guards on the model's user/item indices and returns None for misses.
+    """
+
+    def __init__(self, model: _LightGCNLike) -> None:
+        self._model = model
+
+    def __call__(self, user_id: str, parent_asin: str) -> float | None:
+        graph = getattr(self._model, "_graph", None)
+        if graph is None:
+            return None
+        if user_id not in graph.user_index or parent_asin not in graph.item_index:
+            return None
+        return float(self._model.predict(user_id, parent_asin))
+
+
+class _SVDLike(Protocol):
+    def predict(self, user_id: str, parent_asin: str, /) -> float: ...
+
+
+class SVDScorer:
+    """Wraps SVDRecommender.predict. Returns the raw rating in [1, 5]."""
+
+    def __init__(self, model: _SVDLike) -> None:
+        self._model = model
+
+    def __call__(self, user_id: str, parent_asin: str) -> float | None:
+        return float(self._model.predict(user_id, parent_asin))
+
+
+def load_lightgcn_from_checkpoint(
+    checkpoint_path: Path,
+    train: pd.DataFrame,
+    config: dict[str, Any],
+) -> "LightGCNScorer":
+    """Mirror evaluate_lightgcn_checkpoint.py: prepare inference state, then load weights."""
+    from src.models.lightgcn import LightGCNRecommender
+
+    graph_cfg = config.get("graph", {})
+    model = LightGCNRecommender(
+        embedding_dim=int(graph_cfg.get("embedding_dim", 64)),
+        n_layers=int(graph_cfg.get("n_layers", 2)),
+        epochs=int(graph_cfg.get("epochs", 10)),
+        lr=float(graph_cfg.get("lr", 0.005)),
+        weight_decay=float(graph_cfg.get("weight_decay", 0.0)),
+        num_negatives=int(graph_cfg.get("num_negatives", 1)),
+        batch_size=int(graph_cfg.get("batch_size", 1024)),
+        seed=int(graph_cfg.get("seed", 42)),
+        device=str(graph_cfg.get("device", "auto")),
+        min_rating_positive=float(graph_cfg.get("min_rating_positive", 4.0)),
+        validation_fraction=float(graph_cfg.get("validation_fraction", 0.1)),
+        progress=False,
+    )
+    model.prepare_for_checkpoint(train)
+    model.load_checkpoint(checkpoint_path)
+    return LightGCNScorer(model)
