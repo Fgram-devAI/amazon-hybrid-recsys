@@ -30,7 +30,7 @@ class Neo4jStore:
     def __enter__(self) -> Neo4jStore:
         return self
 
-    def __exit__(self, *_exc: object) -> None:
+    def __exit__(self, *_: object) -> None:
         self.close()
 
     def ensure_constraints(self) -> None:
@@ -118,3 +118,39 @@ class Neo4jStore:
         with self._driver.session() as session:
             result = session.run(query, user_id=user_id, top_k=top_k)
             return [dict(record) for record in result]
+
+    def fetch_categories_for_items(
+        self, parent_asins: list[str]
+    ) -> dict[str, list[str]]:
+        """Return {parent_asin: [category, ...]} for each provided item."""
+        if not parent_asins:
+            return {}
+        query: LiteralString = (
+            "MATCH (i:Item)-[:IN_CATEGORY]->(c:Category) "
+            "WHERE i.parent_asin IN $parent_asins "
+            "RETURN i.parent_asin AS parent_asin, c.name AS category"
+        )
+        out: dict[str, list[str]] = {}
+        with self._driver.session() as session:
+            for record in session.run(query, parent_asins=list(parent_asins)):
+                out.setdefault(record["parent_asin"], []).append(record["category"])
+        return out
+
+    def fetch_co_rated_neighbors(
+        self, parent_asin: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """Optional CO_RATED_WITH edges; returns [] when the schema lacks the edge."""
+        query: LiteralString = (
+            "MATCH (a:Item {parent_asin: $parent_asin})-[e:CO_RATED_WITH]-(b:Item) "
+            "RETURN b.parent_asin AS parent_asin, "
+            "       e.weight_count AS weight_count, "
+            "       e.weight_jaccard AS weight_jaccard "
+            "ORDER BY e.weight_count DESC LIMIT $top_k"
+        )
+        with self._driver.session() as session:
+            return [
+                dict(record)
+                for record in session.run(
+                    query, parent_asin=parent_asin, top_k=int(top_k)
+                )
+            ]
