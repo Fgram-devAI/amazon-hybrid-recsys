@@ -635,7 +635,9 @@ storage artifacts are not retrained or rebuilt by this command.
 Pipeline:
 
 1. LightGCN (loaded from checkpoint) and SVD (fit-in-CLI from train) produce per-candidate scores.
-2. Milvus retrieves semantic neighbors for the free-text query.
+2. Milvus retrieves semantic neighbors either from a free-text query or, when
+   `--query` is omitted, from a user-profile vector averaged over the user's
+   train-only high-rated item embeddings.
 3. Neo4j retrieves train-only user history + candidate-category overlap.
 4. The LLM (Groq, OpenAI-compatible) explains the deterministic top-K using
    ONLY the structured evidence payload. The LLM never reranks in v1.
@@ -645,7 +647,8 @@ Evidence is exchanged via strict Pydantic schemas
 `LLMRecommendationResponse` for outputs. The prompt builder never depends on
 arbitrary dict keys, and the LLM response is validated against the response
 schema (validation errors surface as `validation_error` in the result, with
-`parsed_json` set to `None`).
+`parsed_json` set to `None`). Common Markdown-wrapped JSON responses are
+normalized before validation, but the original raw text is preserved.
 
 ### Setup
 
@@ -665,10 +668,34 @@ curl -s "https://api.groq.com/openai/v1/models" \
 
 ### Run
 
-Dry-run (no API call, prints candidates + evidence + prompt):
+Profile-based dry-run (no API call, no free-text query). This is the cleanest
+assignment/demo mode: recommendations are grounded in the user's train history,
+not in a synthetic session prompt.
 
 ```bash
-./.venv/bin/python -m src.reasoning.explain \
+KMP_DUPLICATE_LIB_OK=TRUE ./.venv/bin/python -m src.reasoning.explain \
+  --dataset video_games \
+  --user-id <train_user_id> \
+  --top-k 5 \
+  --dry-run
+```
+
+Semantic-profile dry-run with stronger content weight, useful when you want to
+visibly inspect the Milvus/profile signal in the final list:
+
+```bash
+KMP_DUPLICATE_LIB_OK=TRUE ./.venv/bin/python -m src.reasoning.explain \
+  --dataset video_games \
+  --user-id <train_user_id> \
+  --top-k 5 \
+  --weights graph=0.30,svd=0.15,semantic=0.45,popularity=0.10 \
+  --dry-run
+```
+
+Contextual dry-run with an explicit free-text intent:
+
+```bash
+KMP_DUPLICATE_LIB_OK=TRUE ./.venv/bin/python -m src.reasoning.explain \
   --dataset video_games \
   --user-id <train_user_id> \
   --query "open world fantasy role playing game" \
@@ -676,16 +703,22 @@ Dry-run (no API call, prints candidates + evidence + prompt):
   --dry-run
 ```
 
-Live run (writes JSON to a gitignored path):
+By default the CLI prints a compact inspection view. Add `--full-json` to print
+the full prompt/evidence payload, or use `--output` to save the full result.
+
+Live profile-based run (writes JSON to a gitignored path):
 
 ```bash
-./.venv/bin/python -m src.reasoning.explain \
+KMP_DUPLICATE_LIB_OK=TRUE ./.venv/bin/python -m src.reasoning.explain \
   --dataset video_games \
   --user-id <train_user_id> \
-  --query "open world fantasy role playing game" \
   --top-k 5 \
   --output data/processed/video_games/llm_outputs/explain_demo.json
 ```
+
+On macOS, the command can load multiple native OpenMP runtimes through the local
+FAISS / Milvus Lite / SVD stack. `KMP_DUPLICATE_LIB_OK=TRUE` is a local demo
+workaround; it is not needed in every environment and is not baked into the code.
 
 This branch is an **explainability / reasoning extension**, NOT a replacement
 for the evaluated recommender metrics. RMSE / MAE / P@K / R@K / F1@K results
