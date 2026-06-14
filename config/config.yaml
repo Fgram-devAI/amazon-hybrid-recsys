@@ -93,3 +93,24 @@ graph_analysis:
   spectral_k_values: [10, 25, 50]  # candidate k values for spectral clustering report
   girvan_newman_max_nodes: 500     # subgraph node cap; algorithm refuses larger inputs
   random_state: 42
+
+# ---------------------------------------------------------------------------
+# Retrieval storage layer (feat/storage-vector-graph-dbs)
+# Local-only stores derived from data/processed/<dataset>/ artifacts.
+# Milvus Lite stores dense item embeddings; Neo4j stores train-only user-item-
+# category relationships. Generated DB files / volumes / query outputs are
+# gitignored.
+# ---------------------------------------------------------------------------
+storage:
+  vector_backend: milvus_lite
+  milvus_lite_path: data/storage/milvus_assignment.db
+  vector_collection_prefix: amazon
+  vector_embedding_dir: advanced_features/title_desc_embeddings
+  neo4j_uri: bolt://localhost:7687
+  neo4j_user: neo4j
+  neo4j_password_env: NEO4J_PASSWORD
+  neo4j_batch_size: 5000
+  co_rating_edges:
+    enabled: false
+    source_report: graph_analysis/co_rating_edges_min20_top2000.json
+    max_edges: 50000
