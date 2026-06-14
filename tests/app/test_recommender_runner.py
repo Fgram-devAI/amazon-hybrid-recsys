@@ -643,3 +643,28 @@ def test_run_llm_hybrid_handles_unparseable_stdout(tmp_path) -> None:
     assert result.rows == []
     warning_lower = (result.warning or "").lower()
     assert "parse" in warning_lower or "json" in warning_lower
+
+
+def test_run_llm_hybrid_tolerates_native_warning_prefix_on_stdout(tmp_path) -> None:
+    """Native libraries (torch, FAISS, Milvus Lite) can write warnings to stdout
+    before explain.py's JSON payload. The runner must still extract the payload."""
+    noisy_stdout = "native warning line\n" + _fake_explain_full_json(mode="dry_run")
+
+    def fake_subprocess(args, env, cwd):
+        return 0, noisy_stdout, ""
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=2,
+        mode="profile",
+        query=None,
+        dry_run=True,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+    assert result.warning is None
+    assert [r["parent_asin"] for r in result.rows] == ["C", "D"]
+    assert result.rows[0]["method"] == "llm_hybrid_profile"

@@ -545,6 +545,29 @@ def _llm_per_asin_explanation(parsed: dict | None) -> dict[str, dict]:
     return out
 
 
+def _parse_explain_stdout(stdout: str) -> dict:
+    """Extract the JSON payload from ``explain.py`` stdout.
+
+    Native libraries (Torch, FAISS, Milvus Lite, OpenMP) can print warnings or
+    runtime messages to stdout before the actual JSON. Try a strict parse first;
+    if it fails, slice from the first ``{`` to the last ``}`` and parse that.
+    """
+    text = stdout.strip()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            raise
+        payload = json.loads(text[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"explain.py JSON output is not a dict (got {type(payload).__name__})"
+        )
+    return payload
+
+
 def _default_subprocess_runner(args, env, cwd):
     completed = subprocess.run(
         args,
@@ -634,8 +657,8 @@ def run_llm_hybrid(
         )
 
     try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError as exc:
+        payload = _parse_explain_stdout(stdout)
+    except (json.JSONDecodeError, ValueError) as exc:
         return LLMResult(
             rows=[],
             warning=f"Could not parse explain.py JSON output: {exc}",
