@@ -80,3 +80,24 @@ def test_build_vector_payload_serializes_category_list_as_pipe_joined_string():
     )
     rows = build_vector_payload(item_ids, emb, metadata)
     assert rows[0]["categories"] == "Action|Adventure"
+
+
+def test_build_vector_payload_truncates_oversized_strings_to_schema_caps():
+    item_ids = ["a"]
+    emb = _embeddings(1, 2)
+    metadata = pd.DataFrame(
+        {
+            "parent_asin": ["a"],
+            "title": ["x" * 5000],
+            "categories": [["y" * 5000]],
+            "store": ["z" * 5000],
+            "price": [None],
+            "average_rating": [None],
+            "rating_number": [None],
+        }
+    )
+    rows = build_vector_payload(item_ids, emb, metadata)
+    assert len(rows[0]["title"]) == 2048
+    assert len(rows[0]["categories"]) == 2048
+    assert rows[0]["store"] is not None
+    assert len(rows[0]["store"]) == 512

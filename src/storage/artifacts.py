@@ -105,6 +105,13 @@ def _categories_to_string(value: Any) -> str:
     return str(value)
 
 
+# Field caps mirror the VARCHAR max_length values in MilvusLiteStore.create_collection.
+# Real Amazon titles can exceed 512 chars; truncate defensively before insert.
+_MAX_TITLE_CHARS = 2048
+_MAX_CATEGORIES_CHARS = 2048
+_MAX_STORE_CHARS = 512
+
+
 def build_vector_payload(
     item_ids: list[str],
     embeddings: np.ndarray,
@@ -121,9 +128,10 @@ def build_vector_payload(
     for idx, asin in enumerate(item_ids):
         if not metadata.empty and asin in meta_by_asin.index:
             m = meta_by_asin.loc[asin]
-            title = _opt_str(m.get("title")) or ""
-            categories = _categories_to_string(m.get("categories"))
-            store = _opt_str(m.get("store"))
+            title = (_opt_str(m.get("title")) or "")[:_MAX_TITLE_CHARS]
+            categories = _categories_to_string(m.get("categories"))[:_MAX_CATEGORIES_CHARS]
+            store_raw = _opt_str(m.get("store"))
+            store = None if store_raw is None else store_raw[:_MAX_STORE_CHARS]
             price = _opt_float(m.get("price"))
             average_rating = _opt_float(m.get("average_rating"))
             rating_number = _opt_int(m.get("rating_number"))
