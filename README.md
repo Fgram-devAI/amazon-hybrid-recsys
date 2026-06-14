@@ -624,6 +624,79 @@ this local retrieval layer.
 - `.env` — local Neo4j password.
 - `data/processed/<dataset>/storage_queries/` — any JSON/CSV smoke outputs.
 
+## LLM reasoning demo (feat/llm-hybrid-recommender)
+
+The `src/reasoning/` package combines the already-trained models and the
+retrieval stores into a single explanation CLI. LightGCN is loaded from an
+existing checkpoint; SVD is fit from the train split inside the CLI as a
+lightweight score source. Graph models, embeddings, sentiment features, and
+storage artifacts are not retrained or rebuilt by this command.
+
+Pipeline:
+
+1. LightGCN (loaded from checkpoint) and SVD (fit-in-CLI from train) produce per-candidate scores.
+2. Milvus retrieves semantic neighbors for the free-text query.
+3. Neo4j retrieves train-only user history + candidate-category overlap.
+4. The LLM (Groq, OpenAI-compatible) explains the deterministic top-K using
+   ONLY the structured evidence payload. The LLM never reranks in v1.
+
+Evidence is exchanged via strict Pydantic schemas
+(`src/reasoning/schemas.py`): `RecommendationEvidence` for inputs and
+`LLMRecommendationResponse` for outputs. The prompt builder never depends on
+arbitrary dict keys, and the LLM response is validated against the response
+schema (validation errors surface as `validation_error` in the result, with
+`parsed_json` set to `None`).
+
+### Setup
+
+```bash
+# 1. Install deps (this branch adds pydantic).
+./.venv/bin/python -m pip install -r requirements.txt
+
+# 2. Ingest Milvus + Neo4j (see "Storage layer" section).
+
+# 3. Set the LLM API key (Groq) for live runs.
+export GROQ_API_KEY="..."   # optional for --dry-run
+
+# 4. Confirm the configured Groq model is still active.
+curl -s "https://api.groq.com/openai/v1/models" \
+  -H "Authorization: Bearer $GROQ_API_KEY" | python -m json.tool | head -40
+```
+
+### Run
+
+Dry-run (no API call, prints candidates + evidence + prompt):
+
+```bash
+./.venv/bin/python -m src.reasoning.explain \
+  --dataset video_games \
+  --user-id <train_user_id> \
+  --query "open world fantasy role playing game" \
+  --top-k 5 \
+  --dry-run
+```
+
+Live run (writes JSON to a gitignored path):
+
+```bash
+./.venv/bin/python -m src.reasoning.explain \
+  --dataset video_games \
+  --user-id <train_user_id> \
+  --query "open world fantasy role playing game" \
+  --top-k 5 \
+  --output data/processed/video_games/llm_outputs/explain_demo.json
+```
+
+This branch is an **explainability / reasoning extension**, NOT a replacement
+for the evaluated recommender metrics. RMSE / MAE / P@K / R@K / F1@K results
+in this README still come from the measured models on the same sampled-candidate
+protocol.
+
+### Generated files (gitignored)
+
+- `data/processed/<dataset>/llm_outputs/` — JSON results from live LLM runs.
+- `data/processed/<dataset>/reasoning_queries/` — saved query payloads.
+
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
