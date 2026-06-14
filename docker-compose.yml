@@ -1,0 +1,26 @@
+# docker-compose.yml — local services for feat/storage-vector-graph-dbs.
+# Start Neo4j with: docker compose up -d neo4j
+# Browser UI:       http://localhost:7474
+# Bolt endpoint:    bolt://localhost:7687
+#
+# The password is read from .env (see .env.example).
+#
+# Apple Silicon note: the official neo4j:5-community image is amd64-first.
+# On macOS arm64, Docker Desktop will run it under Rosetta emulation
+# automatically — slower but functional. If you hit a startup issue or want
+# native speed, pin a specific tag that ships an arm64/v8 manifest
+# (e.g. neo4j:5.20-community) and confirm with `docker manifest inspect`.
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: amazon_recsys_neo4j
+    ports:
+      - "7474:7474"   # HTTP / Browser
+      - "7687:7687"   # Bolt
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}"
+      NEO4J_server_memory_pagecache_size: "512m"
+      NEO4J_server_memory_heap_max__size: "1G"
+    volumes:
+      - ./docker/neo4j-data:/data
+    restart: unless-stopped
