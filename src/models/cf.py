@@ -41,8 +41,29 @@ class SVDRecommender(_SurpriseRecommender):
         super().__init__(SVD(**kwargs))
 
 
+_ALLOWED_SIM_NAMES = ("cosine", "pearson", "msd")
+
+
 class KNNRecommender(_SurpriseRecommender):
-    def __init__(self, k=40, **kwargs):
+    def __init__(
+        self,
+        k: int = 40,
+        *,
+        sim_name: str | None = None,
+        user_based: bool = False,
+        **kwargs,
+    ):
+        if sim_name is not None and sim_name not in _ALLOWED_SIM_NAMES:
+            raise ValueError(
+                f"sim_name={sim_name!r} not in {_ALLOWED_SIM_NAMES}; "
+                "use 'cosine', 'pearson', or 'msd'."
+            )
+        # Preserve the historical default: when no sim_name is passed, do NOT set
+        # "name" so Surprise applies its own default ("msd"). This keeps every
+        # existing evaluation run bit-identical.
+        sim_options: dict = {"user_based": bool(user_based)}
+        if sim_name is not None:
+            sim_options["name"] = sim_name
         super().__init__(
-            KNNWithMeans(k=k, sim_options={"user_based": False}, verbose=False, **kwargs)
+            KNNWithMeans(k=k, sim_options=sim_options, verbose=False, **kwargs)
         )
