@@ -4,6 +4,7 @@ All tests use tiny in-memory DataFrames; nothing touches Milvus / Neo4j / Groq.
 """
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from app.recommender_runner import (
     EMPTY_ROW_FIELDS,
     KNN_SIM_NAMES,
     LightGCNResult,
+    LLMResult,
     LocalArtifacts,
     _metadata_lookup,
     _normalize_categories,
@@ -23,6 +25,7 @@ from app.recommender_runner import (
     representative_users,
     run_knn,
     run_lightgcn_checkpoint,
+    run_llm_hybrid,
     run_popularity,
     run_svd,
     seen_items_for_user,
@@ -421,3 +424,222 @@ def test_run_lightgcn_checkpoint_catches_loader_exceptions(tmp_path) -> None:
     )
     assert result.rows == []
     assert "corrupt checkpoint" in (result.warning or "")
+
+
+def _fake_explain_full_json(mode: str = "dry_run", query: str | None = None) -> str:
+    """Mirror src.reasoning.explain.run_explain's full return dict (--full-json output)."""
+    payload = {
+        "mode": mode,
+        "user_id": "u1",
+        "query": query,
+        "semantic_source": "free_text_query" if query else "user_high_rated_item_profile",
+        "effective_weights": {"semantic": 0.5, "popularity": 0.5},
+        "candidates": [
+            {
+                "parent_asin": "C",
+                "hybrid_score": 0.91,
+                "lightgcn_score": 4.7,
+                "svd_score": 4.4,
+                "semantic_score": 0.8,
+                "popularity_score": 12.0,
+                "score_sources": ["graph", "svd", "semantic", "popularity"],
+            },
+            {
+                "parent_asin": "D",
+                "hybrid_score": 0.65,
+                "lightgcn_score": 4.0,
+                "svd_score": 4.0,
+                "semantic_score": 0.5,
+                "popularity_score": 7.0,
+                "score_sources": ["graph", "svd", "semantic", "popularity"],
+            },
+        ],
+        "evidence_payloads": [
+            {
+                "candidate": {"parent_asin": "C", "title": "Game C", "categories": ["RPG", "Indie"]},
+                "user_evidence": {"category_overlap": ["RPG"], "graph_evidence_available": True},
+            },
+            {
+                "candidate": {"parent_asin": "D", "title": "Game D", "categories": ["Indie"]},
+                "user_evidence": {"category_overlap": [], "graph_evidence_available": True},
+            },
+        ],
+        "prompt": {"system": "S", "user": "U"},
+        "llm": {
+            "mode": mode,
+            "text": None if mode == "dry_run" else "{...}",
+            "parsed_json": None if mode == "dry_run" else {
+                "summary": "Top games for RPG fans.",
+                "recommendations": [
+                    {
+                        "parent_asin": "C",
+                        "title": "Game C",
+                        "why": "RPG overlap.",
+                        "evidence_used": ["category_overlap"],
+                        "confidence": "high",
+                    }
+                ],
+                "caveats": [],
+            },
+            "validation_error": None,
+        },
+    }
+    return json.dumps(payload)
+
+
+def test_run_llm_hybrid_profile_mode_invokes_subprocess_with_no_query(tmp_path) -> None:
+    captured = {}
+
+    def fake_subprocess(args, env, cwd):
+        captured["args"] = args
+        captured["env"] = env
+        return 0, _fake_explain_full_json(mode="dry_run"), ""
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=2,
+        mode="profile",
+        query=None,
+        dry_run=True,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+
+    # CLI sanity: explain CLI accepts --full-json, --dry-run, --user-id, --dataset.
+    assert "--user-id" in captured["args"]
+    assert "u1" in captured["args"]
+    assert "--query" not in captured["args"]
+    assert "--dry-run" in captured["args"]
+    assert "--full-json" in captured["args"]
+    assert "--dataset" in captured["args"]
+    assert captured["env"]["KMP_DUPLICATE_LIB_OK"] == "TRUE"
+
+    assert isinstance(result, LLMResult)
+    assert result.warning is None
+    assert [r["parent_asin"] for r in result.rows] == ["C", "D"]
+    assert result.rows[0]["method"] == "llm_hybrid_profile"
+    assert result.rows[0]["hybrid_score"] == 0.91
+    # FULL-json schema: flat lightgcn_score / svd_score / semantic_score / popularity_score.
+    assert result.rows[0]["lightgcn_score"] == 4.7
+    assert result.rows[0]["svd_score"] == 4.4
+    assert result.rows[0]["semantic_score"] == 0.8
+    assert result.rows[0]["popularity_score"] == 12.0
+    assert result.rows[0]["score_sources"] == ["graph", "svd", "semantic", "popularity"]
+    assert "llm_summary" in result.rows[0]
+    assert result.rows[0]["semantic_source"] == "user_high_rated_item_profile"
+
+
+def test_run_llm_hybrid_query_mode_forwards_query(tmp_path) -> None:
+    captured = {}
+
+    def fake_subprocess(args, env, cwd):
+        captured["args"] = args
+        return 0, _fake_explain_full_json(mode="dry_run", query="open world rpg"), ""
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=2,
+        mode="query",
+        query="open world rpg",
+        dry_run=True,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+
+    assert "--query" in captured["args"]
+    idx = captured["args"].index("--query")
+    assert captured["args"][idx + 1] == "open world rpg"
+    assert result.rows[0]["method"] == "llm_hybrid_query"
+    assert result.rows[0]["semantic_source"] == "free_text_query"
+
+
+def test_run_llm_hybrid_query_mode_requires_non_empty_query(tmp_path) -> None:
+    def fake_subprocess(args, env, cwd):
+        raise AssertionError("subprocess must not be invoked when query is blank")
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=2,
+        mode="query",
+        query="   ",
+        dry_run=True,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+    assert result.rows == []
+    assert "query" in (result.warning or "").lower()
+
+
+def test_run_llm_hybrid_live_mode_extracts_parsed_json_fields(tmp_path) -> None:
+    def fake_subprocess(args, env, cwd):
+        assert "--dry-run" not in args
+        return 0, _fake_explain_full_json(mode="live"), ""
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=1,
+        mode="profile",
+        query=None,
+        dry_run=False,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+    row = result.rows[0]
+    assert row["llm_summary"] == "Top games for RPG fans."
+    assert row["llm_why"] == "RPG overlap."
+    assert row["llm_confidence"] == "high"
+    assert row["validation_error"] is None
+
+
+def test_run_llm_hybrid_surfaces_subprocess_failure_as_warning(tmp_path) -> None:
+    def fake_subprocess(args, env, cwd):
+        return 1, "", "RuntimeError: Milvus offline"
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=2,
+        mode="profile",
+        query=None,
+        dry_run=True,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+    assert result.rows == []
+    warning = (result.warning or "")
+    assert "Milvus offline" in warning or "exit code 1" in warning
+
+
+def test_run_llm_hybrid_handles_unparseable_stdout(tmp_path) -> None:
+    def fake_subprocess(args, env, cwd):
+        return 0, "not json", ""
+
+    result = run_llm_hybrid(
+        dataset="video_games",
+        user_id="u1",
+        top_k=2,
+        mode="profile",
+        query=None,
+        dry_run=True,
+        metadata=_toy_metadata(),
+        seen=set(),
+        subprocess_runner=fake_subprocess,
+        project_root=tmp_path,
+    )
+    assert result.rows == []
+    warning_lower = (result.warning or "").lower()
+    assert "parse" in warning_lower or "json" in warning_lower

@@ -6,7 +6,11 @@ nothing here touches Streamlit globals or session state.
 """
 from __future__ import annotations
 
+import json
 import math
+import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -498,3 +502,200 @@ def run_lightgcn_checkpoint(
         _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
         rows.append(row)
     return LightGCNResult(rows=rows, warning=None)
+
+
+LLM_EXTRA_FIELDS = (
+    "semantic_source",
+    "llm_summary",
+    "llm_why",
+    "llm_confidence",
+    "validation_error",
+)
+
+
+@dataclass
+class LLMResult:
+    rows: list[dict]
+    warning: str | None = None
+    mode: str = "dry_run"
+    raw_result: dict | None = None
+
+
+def _llm_row_base() -> dict:
+    base = _empty_row()
+    for key in LLM_EXTRA_FIELDS:
+        base[key] = None
+    return base
+
+
+def _llm_per_asin_explanation(parsed: dict | None) -> dict[str, dict]:
+    if not parsed:
+        return {}
+    summary = str(parsed.get("summary") or "")
+    out: dict[str, dict] = {}
+    for rec in parsed.get("recommendations") or []:
+        asin = str(rec.get("parent_asin", ""))
+        if not asin:
+            continue
+        out[asin] = {
+            "summary": summary,
+            "why": str(rec.get("why") or ""),
+            "confidence": str(rec.get("confidence") or ""),
+        }
+    return out
+
+
+def _default_subprocess_runner(args, env, cwd):
+    completed = subprocess.run(
+        args,
+        env=env,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def run_llm_hybrid(
+    *,
+    dataset: str,
+    user_id: str,
+    top_k: int,
+    mode: str,
+    query: str | None,
+    dry_run: bool,
+    metadata: pd.DataFrame,
+    seen: set[str],
+    subprocess_runner: Callable | None = None,
+    project_root: Path | None = None,
+    weights: str | None = None,
+    config_path: str = "config/config.yaml",
+) -> LLMResult:
+    """Invoke ``src.reasoning.explain`` as a subprocess with --full-json and
+    normalize its candidates into the shared row schema.
+
+    Subprocess isolation: ``KMP_DUPLICATE_LIB_OK=TRUE`` is set so SVD +
+    FAISS/Milvus Lite + Torch never share the Streamlit process's OpenMP
+    runtime, which previously triggered duplicate-runtime crashes on macOS.
+    """
+    if mode not in ("profile", "query"):
+        raise ValueError(f"mode={mode!r} must be 'profile' or 'query'")
+    if mode == "query" and (query is None or not str(query).strip()):
+        return LLMResult(
+            rows=[],
+            warning="Query mode requires a non-empty free-text query.",
+            mode="dry_run" if dry_run else "live",
+        )
+
+    runner = subprocess_runner or _default_subprocess_runner
+    root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[1]
+
+    args: list[str] = [
+        sys.executable,
+        "-m",
+        "src.reasoning.explain",
+        "--dataset",
+        str(dataset),
+        "--user-id",
+        str(user_id),
+        "--top-k",
+        str(int(top_k)),
+        "--config",
+        config_path,
+        "--full-json",
+    ]
+    if mode == "query" and query:
+        args += ["--query", query]
+    if weights:
+        args += ["--weights", weights]
+    if dry_run:
+        args.append("--dry-run")
+
+    env = dict(os.environ)
+    # Explicit (not setdefault) so the isolation guarantee holds even when the
+    # parent process already has a differently-cased value such as 'True'.
+    env["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+    try:
+        rc, stdout, stderr = runner(args, env, root)
+    except Exception as exc:
+        return LLMResult(
+            rows=[],
+            warning=f"LLM hybrid subprocess failed to launch: {exc}",
+            mode="dry_run" if dry_run else "live",
+        )
+
+    if rc != 0:
+        return LLMResult(
+            rows=[],
+            warning=(stderr or f"explain.py exited with code {rc}").strip(),
+            mode="dry_run" if dry_run else "live",
+        )
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        return LLMResult(
+            rows=[],
+            warning=f"Could not parse explain.py JSON output: {exc}",
+            mode="dry_run" if dry_run else "live",
+        )
+
+    method = f"llm_hybrid_{mode}"
+    meta_lookup = _metadata_lookup(metadata)
+    candidates = payload.get("candidates") or []
+    evidence_payloads = payload.get("evidence_payloads") or []
+    evidence_by_asin = {
+        str(ev.get("candidate", {}).get("parent_asin", "")): ev
+        for ev in evidence_payloads
+    }
+    parsed = (payload.get("llm") or {}).get("parsed_json")
+    validation_error = (payload.get("llm") or {}).get("validation_error")
+    explanation_by_asin = _llm_per_asin_explanation(parsed)
+
+    rows: list[dict] = []
+    for rank, cand in enumerate(candidates[: int(top_k)], start=1):
+        asin = str(cand.get("parent_asin", ""))
+        meta_entry = meta_lookup.get(asin)
+        # Prefer real metadata; fall back to evidence_payload candidate fields.
+        ev_candidate = evidence_by_asin.get(asin, {}).get("candidate", {})
+        title = (meta_entry or {}).get("title") or ev_candidate.get("title") or cand.get("title", "")
+        if meta_entry and meta_entry.get("categories"):
+            categories = meta_entry["categories"]
+        elif ev_candidate.get("categories"):
+            categories = list(ev_candidate["categories"])
+        else:
+            categories = _normalize_categories(cand.get("categories"))
+
+        row = _llm_row_base()
+        row.update(
+            {
+                "rank": rank,
+                "parent_asin": asin,
+                "title": title,
+                "categories": categories,
+                "method": method,
+                "hybrid_score": cand.get("hybrid_score"),
+                "svd_score": cand.get("svd_score"),
+                "lightgcn_score": cand.get("lightgcn_score"),
+                "semantic_score": cand.get("semantic_score"),
+                "popularity_score": cand.get("popularity_score"),
+                "score_sources": list(cand.get("score_sources") or []),
+                "already_seen": asin in seen,
+                "semantic_source": payload.get("semantic_source"),
+                "validation_error": validation_error,
+            }
+        )
+        if asin in explanation_by_asin:
+            row["llm_summary"] = explanation_by_asin[asin]["summary"]
+            row["llm_why"] = explanation_by_asin[asin]["why"]
+            row["llm_confidence"] = explanation_by_asin[asin]["confidence"]
+        rows.append(row)
+
+    return LLMResult(
+        rows=rows,
+        warning=None,
+        mode=str(payload.get("mode") or ("dry_run" if dry_run else "live")),
+        raw_result=payload,
+    )
