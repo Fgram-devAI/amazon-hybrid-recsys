@@ -116,6 +116,7 @@ def test_run_explain_dry_run_returns_payload_and_skips_llm(tmp_path: Path) -> No
     if out["evidence_payloads"]:
         assert "candidate" in out["evidence_payloads"][0]
     assert out["semantic_source"] == "free_text_query"
+    assert milvus.last_vector is not None
     assert np.allclose(milvus.last_vector, [0.1, 0.1, 0.1, 0.1])
 
 
