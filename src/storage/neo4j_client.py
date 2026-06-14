@@ -30,7 +30,7 @@ class Neo4jStore:
     def __enter__(self) -> Neo4jStore:
         return self
 
-    def __exit__(self, *_exc: object) -> None:
+    def __exit__(self, *_: object) -> None:
         self.close()
 
     def ensure_constraints(self) -> None:
