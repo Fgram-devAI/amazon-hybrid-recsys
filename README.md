@@ -605,6 +605,9 @@ when `storage.co_rating_edges.enabled` is `true` in `config/config.yaml`.
 The default is `false`; when enabled but no exportable edges exist the
 ingester logs a warning and skips co-rating edges.
 
+Use `--reset` when switching datasets; Neo4j nodes are not dataset-namespaced in
+this local retrieval layer.
+
 ### Graph smoke query
 
 ```bash
@@ -674,10 +677,10 @@ pip install -r requirements.txt
 
 ## Status
 
-🚧 Phase 3 (`feat/graph-recommender`): LightGCN and GraphSAGE are implemented over the train-only bipartite graph, with checkpoint evaluators for long graph runs. **Leakage rule:** held-out test edges never enter message passing or node-feature aggregates. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
+Core recommender, graph-model, Streamlit, and retrieval-storage phases are implemented. LightGCN and GraphSAGE run over the train-only bipartite graph, with checkpoint evaluators for long graph runs. **Leakage rule:** held-out test edges never enter message passing or node-feature aggregates. Compare any low-looking P@10 against the **random**/**popularity** rows before judging a model.
 
 - Models: content-based, SVD CF, Item-KNN CF, and a weighted hybrid behind one `fit/predict/recommend` interface, plus Granite/MiniLM embeddings (cached) and a sampled-negative evaluation runner.
 - A first sampled `movies_and_tv` run and capped graph checkpoint eval are in (see [First results](#first-results)); `digital_music` is validated end-to-end (cold-start case study, not benchmark).
-- Streamlit, Milvus/Neo4j, and the LLM recommender layer remain planned later phases.
+- Streamlit and the Milvus/Neo4j retrieval layer are implemented; the LLM recommender layer remains the planned final phase.
 
 Dataset roles: `Video_Games` and `Movies_and_TV` survive strict 5-core (the benchmarks); `Digital_Music` only survives at 2-core and is the sparsity/cold-start case study.
