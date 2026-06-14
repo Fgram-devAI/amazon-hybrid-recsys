@@ -19,6 +19,7 @@ Rules:
   retrieval evidence (graph_category_overlap / semantic_neighbors).
 - If graph_evidence_available is false, say graph evidence is unavailable.
 - Say when evidence is weak.
+- Return raw JSON only. Do not wrap it in Markdown fences.
 - Return concise, presentation-friendly JSON with this schema:
   {
     "summary": str,
@@ -40,6 +41,7 @@ def build_prompt(
     *,
     user_id: str,
     query: str | None,
+    semantic_source: str | None = None,
     evidence_payloads: list[RecommendationEvidence],
     effective_weights: dict[str, float],
 ) -> dict[str, str]:
@@ -50,6 +52,11 @@ def build_prompt(
     query_line = (
         f"Free-text intent: {query}\n" if query else "Free-text intent: <none>\n"
     )
+    semantic_line = (
+        f"Semantic retrieval source: {semantic_source}\n"
+        if semantic_source
+        else "Semantic retrieval source: <none>\n"
+    )
     evidence_json = json.dumps(
         [item.model_dump(mode="json") for item in evidence_payloads],
         indent=2,
@@ -58,6 +65,7 @@ def build_prompt(
     user_prompt = (
         f"User id: {user_id}\n"
         f"{query_line}"
+        f"{semantic_line}"
         f"Effective hybrid weights: {weights_line}\n\n"
         "Evidence (structured JSON; do not add fields):\n"
         f"{evidence_json}\n\n"

@@ -71,6 +71,17 @@ def test_prompt_includes_evidence_json_and_score_sources():
     assert "evidence_used" in out["system"].lower() or "evidence_used" in out["user"]
 
 
+def test_prompt_includes_semantic_source():
+    out = build_prompt(
+        user_id="U1",
+        query=None,
+        semantic_source="user_high_rated_item_profile",
+        evidence_payloads=_sample_payload(),
+        effective_weights={"semantic": 1.0},
+    )
+    assert "Semantic retrieval source: user_high_rated_item_profile" in out["user"]
+
+
 def test_prompt_marks_graph_unavailable():
     payload = _sample_payload()
     # Mutate the schema instance into one with graph_evidence_available=False.

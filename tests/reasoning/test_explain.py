@@ -19,10 +19,14 @@ class _FakeEmbedder:
 
 
 class _FakeMilvus:
+    def __init__(self):
+        self.last_vector = None
+
     def has_collection(self, name):
         return True
 
     def search(self, name, query_vector, top_k, output_fields):
+        self.last_vector = query_vector
         return [
             {
                 "id": 1,
@@ -80,6 +84,7 @@ def _toy_metadata() -> pd.DataFrame:
 
 
 def test_run_explain_dry_run_returns_payload_and_skips_llm(tmp_path: Path) -> None:
+    milvus = _FakeMilvus()
     out = run_explain(
         user_id="U1",
         query="open world rpg",
@@ -89,7 +94,8 @@ def test_run_explain_dry_run_returns_payload_and_skips_llm(tmp_path: Path) -> No
         train=_toy_train(),
         metadata=_toy_metadata(),
         embedder=_FakeEmbedder(),
-        milvus_store=_FakeMilvus(),
+        profile_query_vector=None,
+        milvus_store=milvus,
         milvus_collection="amazon_video_games_items",
         neo4j_store=_FakeNeo4j(),
         svd_scorer=None,
@@ -109,6 +115,8 @@ def test_run_explain_dry_run_returns_payload_and_skips_llm(tmp_path: Path) -> No
     assert all(isinstance(p, dict) for p in out["evidence_payloads"])
     if out["evidence_payloads"]:
         assert "candidate" in out["evidence_payloads"][0]
+    assert out["semantic_source"] == "free_text_query"
+    assert np.allclose(milvus.last_vector, [0.1, 0.1, 0.1, 0.1])
 
 
 def test_run_explain_writes_output_when_path_provided(tmp_path: Path) -> None:
@@ -122,6 +130,7 @@ def test_run_explain_writes_output_when_path_provided(tmp_path: Path) -> None:
         train=_toy_train(),
         metadata=_toy_metadata(),
         embedder=_FakeEmbedder(),
+        profile_query_vector=None,
         milvus_store=_FakeMilvus(),
         milvus_collection="amazon_video_games_items",
         neo4j_store=_FakeNeo4j(),
@@ -136,24 +145,93 @@ def test_run_explain_writes_output_when_path_provided(tmp_path: Path) -> None:
     assert saved["mode"] == "dry_run"
 
 
-def test_display_payload_includes_prompt_and_evidence_for_dry_run() -> None:
+def test_run_explain_uses_profile_vector_when_query_is_absent() -> None:
+    milvus = _FakeMilvus()
+    out = run_explain(
+        user_id="U1",
+        query=None,
+        candidate_k=10,
+        final_k=2,
+        weights={"semantic": 0.5, "popularity": 0.5},
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        embedder=None,
+        profile_query_vector=[0.3, 0.4, 0.5, 0.6],
+        milvus_store=milvus,
+        milvus_collection="amazon_video_games_items",
+        neo4j_store=_FakeNeo4j(),
+        svd_scorer=None,
+        lightgcn_scorer=None,
+        llm_config=None,
+        dry_run=True,
+        output_path=None,
+    )
+    assert out["semantic_source"] == "user_high_rated_item_profile"
+    assert milvus.last_vector == [0.3, 0.4, 0.5, 0.6]
+    assert out["effective_weights"] == {"semantic": 0.5, "popularity": 0.5}
+
+
+def test_display_payload_is_compact_for_dry_run_by_default() -> None:
     result = {
         "mode": "dry_run",
         "effective_weights": {"popularity": 1.0},
+        "semantic_source": "user_high_rated_item_profile",
+        "candidates": [
+            {
+                "parent_asin": "C1",
+                "hybrid_score": 0.9,
+                "lightgcn_score": 4.8,
+                "svd_score": 4.2,
+                "semantic_score": None,
+                "popularity_score": 10.0,
+                "score_sources": ["graph", "svd"],
+            }
+        ],
+        "llm": {"mode": "dry_run"},
+        "evidence_payloads": [
+            {
+                "candidate": {
+                    "parent_asin": "C1",
+                    "title": "Game C1",
+                    "categories": ["RPG"],
+                },
+                "user_evidence": {
+                    "high_rated_items": [{"parent_asin": "H1", "title": "Hist 1"}],
+                    "category_overlap": ["RPG"],
+                    "graph_evidence_available": True,
+                },
+            }
+        ],
+        "prompt": {"system": "S", "user": "U"},
+    }
+    payload = _display_payload(result)
+    assert "evidence_payloads" not in payload
+    assert "prompt" not in payload
+    assert payload["semantic_source"] == "user_high_rated_item_profile"
+    assert payload["inspection_note"].startswith("Compact dry-run")
+    assert payload["candidates"][0]["title"] == "Game C1"
+    assert payload["candidates"][0]["category_overlap"] == ["RPG"]
+    assert payload["user_profile"]["high_rated_items"][0]["parent_asin"] == "H1"
+
+
+def test_display_payload_full_json_returns_complete_result() -> None:
+    result = {
+        "mode": "dry_run",
+        "effective_weights": {"popularity": 1.0},
+        "semantic_source": "user_high_rated_item_profile",
         "candidates": [{"parent_asin": "C1"}],
         "llm": {"mode": "dry_run"},
         "evidence_payloads": [{"candidate": {"parent_asin": "C1"}}],
         "prompt": {"system": "S", "user": "U"},
     }
-    payload = _display_payload(result)
-    assert payload["evidence_payloads"] == result["evidence_payloads"]
-    assert payload["prompt"] == result["prompt"]
+    assert _display_payload(result, full_json=True) == result
 
 
 def test_display_payload_keeps_live_output_concise() -> None:
     result = {
         "mode": "live",
         "effective_weights": {"popularity": 1.0},
+        "semantic_source": None,
         "candidates": [{"parent_asin": "C1"}],
         "llm": {"mode": "live", "text": "{}"},
         "evidence_payloads": [{"candidate": {"parent_asin": "C1"}}],

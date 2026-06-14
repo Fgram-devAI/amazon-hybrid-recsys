@@ -12,6 +12,7 @@ is a non-empty string.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -22,6 +23,8 @@ from src.reasoning.schemas import LLMRecommendationResponse
 
 
 logger = logging.getLogger("reasoning.llm_client")
+
+_JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
 
 class MissingApiKeyError(RuntimeError):
@@ -88,11 +91,19 @@ class GroqAdapter:
 
 def _try_validate_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
     """Validate `text` against LLMRecommendationResponse; return (dump, error)."""
+    candidate = _strip_json_fence(text)
     try:
-        parsed = LLMRecommendationResponse.model_validate_json(text)
+        parsed = LLMRecommendationResponse.model_validate_json(candidate)
     except ValidationError as exc:
         return None, str(exc)
     return parsed.model_dump(mode="json"), None
+
+
+def _strip_json_fence(text: str) -> str:
+    match = _JSON_FENCE_RE.match(text)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
 
 
 def call_llm(

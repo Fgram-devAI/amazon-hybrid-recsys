@@ -95,6 +95,27 @@ def test_call_llm_real_call_returns_validated_parsed_json():
     assert result["validation_error"] is None
 
 
+def test_call_llm_accepts_json_wrapped_in_markdown_fence():
+    adapter = _FakeAdapter(response=f"```json\n{_valid_response_text()}\n```")
+    result = call_llm(
+        adapter=adapter,
+        prompt={"system": "S", "user": "U"},
+        config=LLMConfig(
+            provider="groq",
+            model="x",
+            api_key="key",
+            base_url="https://example/v1",
+            temperature=0.2,
+            max_tokens=10,
+            timeout_seconds=5,
+        ),
+        dry_run=False,
+    )
+    assert result["text"].startswith("```json")
+    assert result["parsed_json"]["summary"] == "ok"
+    assert result["validation_error"] is None
+
+
 def test_call_llm_handles_invalid_response_text():
     adapter = _FakeAdapter(response="hello, not json")
     result = call_llm(

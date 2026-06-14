@@ -26,6 +26,11 @@ def test_min_max_normalize_constant_returns_zeros():
     assert out == [0.0, 0.0, 0.0]
 
 
+def test_min_max_normalize_constant_sparse_source_marks_present_rows():
+    out = min_max_normalize([None, 2.0, None])
+    assert out == [None, 1.0, None]
+
+
 def test_min_max_normalize_handles_none():
     out = min_max_normalize([1.0, None, 5.0])
     assert out[0] == 0.0
@@ -79,6 +84,21 @@ def test_weighted_fuse_skips_missing_per_row():
     # B has only svd (0.4)
     assert math.isclose(b["hybrid_score"], 0.4, rel_tol=1e-6)
     assert b["score_sources"] == ["svd"]
+
+
+def test_weighted_fuse_can_treat_missing_scores_as_zero():
+    rows = [
+        {"parent_asin": "A", "graph": 1.0, "semantic": None},
+        {"parent_asin": "B", "graph": 0.2, "semantic": 1.0},
+    ]
+    weights = {"graph": 0.3, "semantic": 0.7}
+    fused = weighted_fuse(rows, weights=weights, renormalize_missing=False)
+    a = next(r for r in fused if r["parent_asin"] == "A")
+    b = next(r for r in fused if r["parent_asin"] == "B")
+    assert math.isclose(a["hybrid_score"], 0.3, rel_tol=1e-6)
+    assert math.isclose(b["hybrid_score"], 0.76, rel_tol=1e-6)
+    assert a["score_sources"] == ["graph"]
+    assert set(b["score_sources"]) == {"graph", "semantic"}
 
 
 def _toy_train():
@@ -155,6 +175,31 @@ def test_generate_candidates_combines_sources_and_excludes_train_items():
         assert "hybrid_score" in row
         assert "score_sources" in row
         assert isinstance(row["score_sources"], list)
+
+
+def test_generate_candidates_semantic_weight_penalizes_missing_semantic_rows():
+    train = _toy_train()
+
+    class _ConstLightGCN:
+        def __call__(self, user_id, parent_asin):
+            return {"C": 1.0, "D": 0.2}.get(parent_asin, 0.0)
+
+    semantic = SemanticScorer([{"parent_asin": "D", "distance": 0.0}])
+
+    out = generate_candidates(
+        user_id="U1",
+        candidate_pool=["C", "D"],
+        train=train,
+        svd_scorer=None,
+        lightgcn_scorer=_ConstLightGCN(),
+        semantic_scorer=semantic,
+        popularity_scorer=None,
+        weights={"graph": 0.3, "semantic": 0.7},
+        final_k=2,
+    )
+    assert out[0]["parent_asin"] == "D"
+    assert out[0]["semantic_score"] == 1.0
+    assert "semantic" in out[0]["score_sources"]
 
 
 def test_generate_candidates_warns_when_a_source_is_none(caplog):

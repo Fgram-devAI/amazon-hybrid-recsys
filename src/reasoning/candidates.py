@@ -22,6 +22,8 @@ def min_max_normalize(values: list[float | None]) -> list[float | None]:
     lo = min(present)
     hi = max(present)
     if hi == lo:
+        if any(v is None for v in values):
+            return [None if v is None else 1.0 for v in values]
         return [0.0 if v is not None else None for v in values]
     span = hi - lo
     return [None if v is None else (v - lo) / span for v in values]
@@ -41,18 +43,22 @@ def redistribute_weights(
 
 
 def weighted_fuse(
-    rows: Iterable[Mapping[str, Any]], *, weights: Mapping[str, float]
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    weights: Mapping[str, float],
+    renormalize_missing: bool = True,
 ) -> list[dict[str, Any]]:
     """Combine per-source normalized scores into a hybrid score.
 
-    Each row's hybrid_score uses only the sources actually present on that row;
-    the weight denominator is renormalized accordingly. Missing values (None)
-    are skipped and the source key is omitted from ``score_sources``.
+    Missing values (None) are skipped and the source key is omitted from
+    ``score_sources``. When ``renormalize_missing`` is false, missing row-level
+    scores contribute 0 so high weights on semantic/profile evidence can change
+    ranking instead of being redistributed away per candidate.
     """
     fused: list[dict[str, Any]] = []
     for row in rows:
         used_weights = {k: float(weights[k]) for k in weights if row.get(k) is not None}
-        total_w = sum(used_weights.values())
+        total_w = sum(used_weights.values()) if renormalize_missing else sum(weights.values())
         if total_w == 0:
             hybrid = 0.0
             sources: list[str] = []
@@ -171,7 +177,7 @@ def generate_candidates(
         if "popularity" in effective_weights:
             row["popularity"] = norm_pop[i]
 
-    fused = weighted_fuse(raw_rows, weights=effective_weights)
+    fused = weighted_fuse(raw_rows, weights=effective_weights, renormalize_missing=False)
     fused.sort(key=lambda r: r["hybrid_score"], reverse=True)
     return fused[:final_k]
 

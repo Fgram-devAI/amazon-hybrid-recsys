@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -42,10 +43,12 @@ from src.reasoning.llm_client import (
 from src.reasoning.prompts import build_prompt
 from src.reasoning.schemas import RecommendationEvidence
 from src.storage.config import (
+    load_storage_config,
     milvus_lite_path,
     neo4j_credentials,
     vector_collection_name,
 )
+from src.storage.artifacts import load_vector_artifacts
 from src.storage.milvus_lite import MilvusLiteStore
 from src.storage.neo4j_client import Neo4jStore
 
@@ -81,18 +84,100 @@ class _UnusedAdapter:
         raise MissingApiKeyError("LLM adapter is not configured (dry-run path).")
 
 
-def _display_payload(result: dict[str, Any]) -> dict[str, Any]:
+def _candidate_summary(result: dict[str, Any]) -> list[dict[str, Any]]:
+    by_asin = {
+        ev["candidate"]["parent_asin"]: ev for ev in result.get("evidence_payloads", [])
+    }
+    rows: list[dict[str, Any]] = []
+    for rank, row in enumerate(result.get("candidates", []), start=1):
+        asin = str(row["parent_asin"])
+        evidence = by_asin.get(asin, {})
+        candidate = evidence.get("candidate", {})
+        user_evidence = evidence.get("user_evidence", {})
+        rows.append(
+            {
+                "rank": rank,
+                "parent_asin": asin,
+                "title": candidate.get("title", ""),
+                "categories": candidate.get("categories", []),
+                "hybrid_score": row.get("hybrid_score"),
+                "raw_scores": {
+                    "lightgcn": row.get("lightgcn_score"),
+                    "svd": row.get("svd_score"),
+                    "semantic": row.get("semantic_score"),
+                    "popularity": row.get("popularity_score"),
+                },
+                "score_sources": row.get("score_sources", []),
+                "category_overlap": user_evidence.get("category_overlap", []),
+            }
+        )
+    return rows
+
+
+def _user_profile_summary(result: dict[str, Any]) -> dict[str, Any]:
+    evidence = result.get("evidence_payloads") or []
+    if not evidence:
+        return {"high_rated_items": [], "graph_evidence_available": False}
+    first = evidence[0].get("user_evidence", {})
+    return {
+        "graph_evidence_available": first.get("graph_evidence_available", False),
+        "high_rated_items": first.get("high_rated_items", []),
+    }
+
+
+def _display_payload(result: dict[str, Any], *, full_json: bool = False) -> dict[str, Any]:
     """Return the JSON payload printed to stdout."""
+    if full_json:
+        return result
     payload = {
         "mode": result["mode"],
         "effective_weights": result["effective_weights"],
-        "candidates": result["candidates"],
+        "semantic_source": result.get("semantic_source"),
+        "candidates": _candidate_summary(result),
+        "user_profile": _user_profile_summary(result),
         "llm": result["llm"],
     }
     if result["mode"] == "dry_run":
-        payload["evidence_payloads"] = result.get("evidence_payloads", [])
-        payload["prompt"] = result.get("prompt", {})
+        payload["inspection_note"] = (
+            "Compact dry-run view. Use --full-json to print prompt/evidence, "
+            "or --output to save the full payload."
+        )
     return payload
+
+
+def _build_user_profile_query_vector(
+    *,
+    train: pd.DataFrame,
+    processed_dir: Path,
+    dataset: str,
+    embedding_subdir: str,
+    user_id: str,
+    min_rating: float = 4.0,
+) -> list[float] | None:
+    user_rows = train.loc[
+        (train["user_id"].astype(str) == str(user_id))
+        & (train["rating"].astype(float) >= float(min_rating)),
+        "parent_asin",
+    ]
+    liked_ids = set(user_rows.astype(str).tolist())
+    if not liked_ids:
+        return None
+
+    artifacts = load_vector_artifacts(
+        processed_dir=processed_dir,
+        dataset_key=dataset,
+        embedding_subdir=embedding_subdir,
+    )
+    index = {asin: i for i, asin in enumerate(artifacts.item_ids)}
+    rows = [index[asin] for asin in liked_ids if asin in index]
+    if not rows:
+        return None
+
+    profile = artifacts.embeddings[rows].mean(axis=0).astype("float32")
+    norm = float(np.linalg.norm(profile))
+    if norm <= 0:
+        return None
+    return (profile / norm).tolist()
 
 
 def run_explain(
@@ -105,6 +190,7 @@ def run_explain(
     train: pd.DataFrame,
     metadata: pd.DataFrame,
     embedder: Any | None,
+    profile_query_vector: list[float] | None,
     milvus_store: Any | None,
     milvus_collection: str,
     neo4j_store: Any | None,
@@ -119,14 +205,22 @@ def run_explain(
     # Semantic neighbors (requires both an embedder and a Milvus collection).
     semantic_scorer: SemanticScorer | None = None
     semantic_hits: list[dict[str, Any]] = []
-    if milvus_store is not None and embedder is not None:
+    semantic_source: str | None = None
+    if milvus_store is not None and (embedder is not None or profile_query_vector is not None):
         fetcher = MilvusEvidenceFetcher(
             store=milvus_store, collection_name=milvus_collection
         )
         text = query or ""
         if text:
-            query_vec = embedder.encode([text])[0].astype("float32").tolist()
-            semantic_hits = fetcher.semantic_neighbors(query_vector=query_vec, top_k=candidate_k)
+            if embedder is not None:
+                query_vec = embedder.encode([text])[0].astype("float32").tolist()
+                semantic_hits = fetcher.semantic_neighbors(query_vector=query_vec, top_k=candidate_k)
+                semantic_source = "free_text_query"
+        elif profile_query_vector is not None:
+            semantic_hits = fetcher.semantic_neighbors(
+                query_vector=profile_query_vector, top_k=candidate_k
+            )
+            semantic_source = "user_high_rated_item_profile"
         if semantic_hits:
             semantic_scorer = SemanticScorer(semantic_hits)
 
@@ -208,6 +302,7 @@ def run_explain(
     prompt = build_prompt(
         user_id=user_id,
         query=query,
+        semantic_source=semantic_source,
         evidence_payloads=evidence_payloads,
         effective_weights=effective_weights,
     )
@@ -234,6 +329,7 @@ def run_explain(
         "mode": "dry_run" if dry_run else llm_result.get("mode", "live"),
         "user_id": user_id,
         "query": query,
+        "semantic_source": semantic_source,
         "effective_weights": effective_weights,
         "candidates": candidates,
         "evidence_payloads": evidence_dumps,
@@ -260,6 +356,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--top-k", dest="final_k", type=int, default=None)
     parser.add_argument("--weights", default=None, help="graph=0.5,svd=0.25,...")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--full-json",
+        action="store_true",
+        help="Print the full prompt/evidence payload instead of the compact summary.",
+    )
     parser.add_argument("--output", default=None)
     parser.add_argument("--config", default="config/config.yaml")
     return parser.parse_args(argv)
@@ -300,8 +401,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.warning("[reasoning] Milvus unavailable: %s", exc)
         milvus_store = None
 
-    # ---- Embedder ----
+    # ---- Semantic profile/query vector ----
     embedder = None
+    profile_query_vector: list[float] | None = None
     if milvus_store is not None and args.query:
         try:
             from src.models.embedding import build_embedder
@@ -309,6 +411,25 @@ def main(argv: list[str] | None = None) -> int:
             embedder = build_embedder(config)
         except Exception as exc:
             logger.warning("[reasoning] embedder unavailable: %s", exc)
+    elif milvus_store is not None:
+        try:
+            storage_cfg = load_storage_config(config)
+            profile_query_vector = _build_user_profile_query_vector(
+                train=train,
+                processed_dir=Path(config["processed_dir"]),
+                dataset=dataset,
+                embedding_subdir=str(storage_cfg["vector_embedding_dir"]),
+                user_id=args.user_id,
+                min_rating=float(config.get("graph", {}).get("min_rating_positive", 4.0)),
+            )
+            if profile_query_vector is not None:
+                logger.info(
+                    "[reasoning] semantic profile vector built from high-rated train items"
+                )
+            else:
+                logger.info("[reasoning] semantic profile vector unavailable for user")
+        except Exception as exc:
+            logger.warning("[reasoning] semantic profile vector unavailable: %s", exc)
 
     # ---- Neo4j ----
     neo4j_store: Neo4jStore | None = None
@@ -382,6 +503,7 @@ def main(argv: list[str] | None = None) -> int:
             train=train,
             metadata=metadata,
             embedder=embedder,
+            profile_query_vector=profile_query_vector,
             milvus_store=milvus_store,
             milvus_collection=milvus_collection,
             neo4j_store=neo4j_store,
@@ -397,7 +519,7 @@ def main(argv: list[str] | None = None) -> int:
         if neo4j_store is not None:
             neo4j_store.close()
 
-    print(json.dumps(_display_payload(result), default=str, indent=2))
+    print(json.dumps(_display_payload(result, full_json=bool(args.full_json)), default=str, indent=2))
     return 0
 
 
