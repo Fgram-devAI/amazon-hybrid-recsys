@@ -14,6 +14,9 @@ from app.recommender_runner import (
     _metadata_lookup,
     _normalize_categories,
     load_local_artifacts,
+    representative_users,
+    seen_items_for_user,
+    user_history_rows,
 )
 
 
@@ -110,3 +113,65 @@ def test_load_local_artifacts_handles_only_metadata_present(tmp_path: Path) -> N
     assert artifacts.available is False
     assert any("train.parquet" in r for r in artifacts.missing_reasons)
     assert artifacts.metadata.shape[0] == 4
+
+
+def _toy_train() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"user_id": "u1", "parent_asin": "A", "rating": 5.0, "timestamp": 1},
+            {"user_id": "u1", "parent_asin": "B", "rating": 4.0, "timestamp": 2},
+            {"user_id": "u2", "parent_asin": "A", "rating": 4.0, "timestamp": 3},
+            {"user_id": "u2", "parent_asin": "C", "rating": 5.0, "timestamp": 4},
+            {"user_id": "u3", "parent_asin": "B", "rating": 5.0, "timestamp": 5},
+            {"user_id": "u3", "parent_asin": "D", "rating": 5.0, "timestamp": 6},
+        ]
+    )
+
+
+def _toy_metadata() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"parent_asin": "A", "title": "Game A", "categories": "RPG"},
+            {"parent_asin": "B", "title": "Game B", "categories": "Strategy"},
+            {"parent_asin": "C", "title": "Game C", "categories": "RPG|Indie"},
+            {"parent_asin": "D", "title": "Game D", "categories": "Indie"},
+        ]
+    )
+
+
+def test_representative_users_returns_stable_top_n_by_interaction_count() -> None:
+    users = representative_users(_toy_train(), limit=2)
+    # All three users have 2 interactions; deterministic tie-break by user_id.
+    assert users == ["u1", "u2"]
+
+
+def test_representative_users_respects_min_interactions_filter() -> None:
+    train = _toy_train().drop(index=[5])  # u3 now has 1 interaction
+    users = representative_users(train, limit=5, min_interactions=2)
+    assert users == ["u1", "u2"]
+
+
+def test_seen_items_for_user_includes_train_items_only() -> None:
+    seen = seen_items_for_user(_toy_train(), user_id="u1")
+    assert seen == {"A", "B"}
+
+
+def test_seen_items_for_user_handles_unknown_user() -> None:
+    seen = seen_items_for_user(_toy_train(), user_id="ghost")
+    assert seen == set()
+
+
+def test_user_history_rows_joins_metadata_with_parsed_categories() -> None:
+    rows = user_history_rows(
+        _toy_train(),
+        _toy_metadata(),
+        user_id="u1",
+        min_rating=4.0,
+        limit=5,
+    )
+    # newest-first by timestamp: u1 has B@ts=2 then A@ts=1
+    assert [r["parent_asin"] for r in rows] == ["B", "A"]
+    a_row = next(r for r in rows if r["parent_asin"] == "A")
+    assert a_row["title"] == "Game A"
+    assert a_row["categories"] == ["RPG"]
+    assert a_row["rating"] == 5.0

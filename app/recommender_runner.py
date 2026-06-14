@@ -69,9 +69,10 @@ def load_local_artifacts(
 ) -> LocalArtifacts:
     """Load ``train.parquet`` + ``metadata.parquet`` for the dataset.
 
-    Returns ``LocalArtifacts`` with empty DataFrames + ``available=False`` when
-    a required file is missing. Callers render a friendly warning in the
-    Streamlit UI instead of crashing.
+    Returns ``LocalArtifacts`` with ``available=False`` and per-file
+    ``missing_reasons`` when any required file is missing; files that exist are
+    still loaded so callers can use partial data for diagnostics. Callers render
+    a friendly warning in the Streamlit UI instead of crashing.
     """
     base = Path(processed_dir) / dataset
     train_path = base / "train.parquet"
@@ -99,3 +100,69 @@ def load_local_artifacts(
         available=not missing,
         missing_reasons=missing,
     )
+
+
+def representative_users(
+    train: pd.DataFrame,
+    *,
+    limit: int = 25,
+    min_interactions: int = 2,
+) -> list[str]:
+    """Return up to ``limit`` user ids sorted by interaction count then lex order."""
+    if train.empty:
+        return []
+    counts = train["user_id"].astype(str).value_counts()
+    counts = counts[counts >= int(min_interactions)]
+    if counts.empty:
+        return []
+    ranked = counts.reset_index()
+    ranked.columns = ["user_id", "count"]
+    ranked = ranked.sort_values(
+        ["count", "user_id"], ascending=[False, True], kind="mergesort"
+    )
+    return ranked["user_id"].head(int(limit)).tolist()
+
+
+def seen_items_for_user(train: pd.DataFrame, *, user_id: str) -> set[str]:
+    """Set of parent_asins the user has rated in train (used to exclude later)."""
+    if train.empty:
+        return set()
+    mask = train["user_id"].astype(str) == str(user_id)
+    return set(train.loc[mask, "parent_asin"].astype(str).tolist())
+
+
+def user_history_rows(
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    *,
+    user_id: str,
+    min_rating: float = 4.0,
+    limit: int = 10,
+) -> list[dict]:
+    """High-rated train items for the user, joined with title/categories."""
+    if train.empty:
+        return []
+    mask = (train["user_id"].astype(str) == str(user_id)) & (
+        train["rating"].astype(float) >= float(min_rating)
+    )
+    history = train.loc[mask].copy()
+    if history.empty:
+        return []
+    if "timestamp" in history.columns:
+        history = history.sort_values("timestamp", ascending=False, kind="mergesort")
+    history = history.head(int(limit))
+
+    meta = _metadata_lookup(metadata)
+    rows: list[dict] = []
+    for _, row in history.iterrows():
+        asin = str(row["parent_asin"])
+        meta_entry = meta.get(asin, {"title": "", "categories": []})
+        rows.append(
+            {
+                "parent_asin": asin,
+                "title": meta_entry["title"],
+                "categories": meta_entry["categories"],
+                "rating": float(row["rating"]),
+            }
+        )
+    return rows
