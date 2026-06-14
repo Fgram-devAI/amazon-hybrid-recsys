@@ -10,9 +10,11 @@ from pathlib import Path
 import pandas as pd
 
 from app.recommender_runner import (
+    DEFAULT_CANDIDATE_POOL_SIZE,
     LocalArtifacts,
     _metadata_lookup,
     _normalize_categories,
+    build_candidate_pool,
     load_local_artifacts,
     representative_users,
     seen_items_for_user,
@@ -175,3 +177,56 @@ def test_user_history_rows_joins_metadata_with_parsed_categories() -> None:
     assert a_row["title"] == "Game A"
     assert a_row["categories"] == ["RPG"]
     assert a_row["rating"] == 5.0
+
+
+def test_default_candidate_pool_size_matches_spec() -> None:
+    assert DEFAULT_CANDIDATE_POOL_SIZE == 500
+
+
+def test_build_candidate_pool_excludes_seen_and_caps_size() -> None:
+    train = _toy_train()
+    seen = {"A", "B"}
+    pool = build_candidate_pool(
+        train=train,
+        metadata=_toy_metadata(),
+        seen=seen,
+        pool_size=10,
+        seed_asin=None,
+    )
+    assert "A" not in pool and "B" not in pool
+    assert len(pool) <= 10
+
+
+def test_build_candidate_pool_promotes_same_category_items_when_seed_given() -> None:
+    train = _toy_train()
+    metadata = pd.DataFrame(
+        [
+            {"parent_asin": "A", "title": "A", "categories": "RPG"},
+            {"parent_asin": "B", "title": "B", "categories": "Strategy"},
+            {"parent_asin": "C", "title": "C", "categories": "RPG|Indie"},
+            {"parent_asin": "D", "title": "D", "categories": "Indie"},
+        ]
+    )
+    pool = build_candidate_pool(
+        train=train,
+        metadata=metadata,
+        seen={"A"},
+        pool_size=10,
+        seed_asin="C",
+    )
+    # The seed itself must be excluded; same-category items should appear before
+    # unrelated items.
+    assert "C" not in pool
+    assert pool.index("D") < pool.index("B")  # D shares Indie with seed C
+
+
+def test_build_candidate_pool_handles_unknown_seed_gracefully() -> None:
+    pool = build_candidate_pool(
+        train=_toy_train(),
+        metadata=_toy_metadata(),
+        seen=set(),
+        pool_size=5,
+        seed_asin="ZZZ",
+    )
+    assert isinstance(pool, list)
+    assert len(pool) > 0

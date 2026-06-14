@@ -166,3 +166,53 @@ def user_history_rows(
             }
         )
     return rows
+
+
+DEFAULT_CANDIDATE_POOL_SIZE = 500
+
+
+def build_candidate_pool(
+    *,
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    seen: set[str],
+    pool_size: int,
+    seed_asin: str | None = None,
+) -> list[str]:
+    """Bounded candidate pool with seed-category expansion.
+
+    Order: same-category items first (when seed is provided and in metadata),
+    then popular train items, then any remaining metadata items. The seed asin
+    and items in ``seen`` are always excluded. Result is capped at ``pool_size``.
+    """
+    meta_lookup = _metadata_lookup(metadata)
+    exclude: set[str] = set(seen)
+    if seed_asin:
+        exclude.add(str(seed_asin))
+
+    seed_neighbors: list[str] = []
+    if seed_asin and seed_asin in meta_lookup:
+        seed_cats = set(meta_lookup[seed_asin]["categories"])
+        if seed_cats:
+            for asin, entry in meta_lookup.items():
+                if asin in exclude:
+                    continue
+                if seed_cats.intersection(entry["categories"]):
+                    seed_neighbors.append(asin)
+
+    if not train.empty:
+        popular = (
+            train.loc[~train["parent_asin"].astype(str).isin(exclude), "parent_asin"]
+            .astype(str)
+            .value_counts()
+            .head(pool_size)
+            .index
+            .tolist()
+        )
+    else:
+        popular = []
+
+    meta_asins = [a for a in meta_lookup.keys() if a not in exclude]
+
+    combined = list(dict.fromkeys(seed_neighbors + popular + meta_asins))
+    return combined[: max(int(pool_size), 1)]
