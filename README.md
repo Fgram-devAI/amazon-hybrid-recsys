@@ -807,6 +807,8 @@ The `KMP_DUPLICATE_LIB_OK=TRUE` flag is the same macOS OpenMP workaround used by
 the reasoning CLI; it is harmless on Linux. The LLM hybrid rows additionally
 shell out to `python -m src.reasoning.explain --full-json` as a subprocess so
 SVD + Milvus Lite + Torch never share the Streamlit process's OpenMP runtime.
+The app loads `.env` from the repository root on startup, so local
+`GROQ_API_KEY` / `NEO4J_PASSWORD` values do not need to be exported manually.
 
 ### Required local artifacts
 
@@ -819,6 +821,11 @@ Optional artifacts unlock more methods:
 
 - `data/processed/video_games/graph_checkpoints/lightgcn_40ep_neg4_wd1e-5.pt`
   for the LightGCN row.
+- `data/processed/video_games/graph_checkpoints/graphsage_20ep.pt` or
+  `graphsage.pt` for the GraphSAGE MSE checkpoint row.
+- `data/processed/video_games/advanced_features/title_desc_embeddings/` and
+  optional sentiment aggregates for the content-enriched and calibrated-hybrid
+  rows.
 - A populated Milvus Lite collection + running Neo4j (see "Storage layer") for
   semantic and graph evidence in LLM hybrid rows.
 - `GROQ_API_KEY` for a live LLM call (off by default).
@@ -831,12 +838,18 @@ disables interactive runs.
 - **Popularity** — train interaction count, seen items excluded.
 - **SVD** — `src.models.cf.SVDRecommender` fit once per dataset and cached with
   `st.cache_resource`.
+- **Content enriched** — title/description embeddings + filtered categories +
+  numeric metadata, with optional train-only sentiment aggregates.
+- **Calibrated hybrid** — calibrated SVD + content-enriched blend, exposed as a
+  separate qualitative row rather than hidden inside the LLM hybrid.
 - **Item-KNN cosine / pearson / msd** — `KNNRecommender(sim_name=...)`,
   item-based. The KNN wrapper still defaults to Surprise's `msd` when no
   `sim_name` is passed, so existing evaluation runs are unchanged.
 - **LightGCN checkpoint** — re-scores from the existing checkpoint via the
   reasoning scorer loader; shows a warning instead of crashing when the
   checkpoint file is missing.
+- **GraphSAGE MSE checkpoint** — re-scores with the stored GraphSAGE rating
+  model when a checkpoint is available.
 - **LLM hybrid — profile mode** — `src.reasoning.explain` with no free-text
   query; the semantic vector is built from the user's high-rated train items.
 - **LLM hybrid — query mode** — `src.reasoning.explain` with the user's
@@ -846,6 +859,12 @@ disables interactive runs.
 The LLM modes default to `--dry-run`. A "Call Groq for explanation" checkbox in
 the sidebar enables the live call; when checked without `GROQ_API_KEY` set the
 tab warns and falls back to dry-run.
+
+The **Candidate pool** slider controls how many unseen local candidates are
+scored before Top-K is displayed. Larger pools are slower but reduce the chance
+that every model surfaces the same globally popular accessory from a small
+popularity-heavy pool. The optional seed `parent_asin` promotes same-category
+items into the pool and excludes the seed itself.
 
 ### Output table
 

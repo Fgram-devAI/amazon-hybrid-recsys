@@ -264,6 +264,52 @@ def _decorate_row(
     return row
 
 
+def run_fitted_recommender(
+    *,
+    model,
+    train: pd.DataFrame,
+    metadata: pd.DataFrame,
+    user_id: str,
+    top_k: int,
+    method: str,
+    score_field: str,
+    score_sources: list[str],
+    candidate_pool_size: int = DEFAULT_CANDIDATE_POOL_SIZE,
+    seed_asin: str | None = None,
+) -> list[dict]:
+    """Rank a bounded unseen pool with an already-fitted recommender."""
+    if train.empty:
+        return []
+    seen = seen_items_for_user(train, user_id=user_id)
+    pool = build_candidate_pool(
+        train=train,
+        metadata=metadata,
+        seen=seen,
+        pool_size=candidate_pool_size,
+        seed_asin=seed_asin,
+    )
+    if not pool:
+        return []
+
+    meta = _metadata_lookup(metadata)
+    scored = [(asin, float(model.predict(user_id, asin))) for asin in pool]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+
+    rows: list[dict] = []
+    for rank, (asin, score) in enumerate(scored[: int(top_k)], start=1):
+        row = _empty_row()
+        row.update(
+            {
+                "method": method,
+                score_field: float(score),
+                "score_sources": list(score_sources),
+            }
+        )
+        _decorate_row(row, rank=rank, asin=str(asin), meta_lookup=meta)
+        rows.append(row)
+    return rows
+
+
 def run_popularity(
     *,
     train: pd.DataFrame,

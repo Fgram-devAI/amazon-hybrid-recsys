@@ -126,13 +126,21 @@ def call_llm(
             f"LLM provider {config.provider!r} requires an API key but none was provided "
             "(set the env variable named in config['llm']['api_key_env'])."
         )
-    text = adapter.chat(
-        system=prompt["system"],
-        user=prompt["user"],
-        temperature=config.temperature,
-        max_tokens=config.max_tokens,
-        timeout_seconds=config.timeout_seconds,
-    )
+    try:
+        text = adapter.chat(
+            system=prompt["system"],
+            user=prompt["user"],
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            timeout_seconds=config.timeout_seconds,
+        )
+    except requests.RequestException as exc:
+        return {
+            "mode": "live",
+            "text": None,
+            "parsed_json": None,
+            "validation_error": f"LLM provider request failed: {exc}",
+        }
     parsed_json, validation_error = _try_validate_response(text)
     return {
         "mode": "live",

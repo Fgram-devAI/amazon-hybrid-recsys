@@ -22,6 +22,14 @@ import streamlit as st  # noqa: E402
 from app import charts  # noqa: E402
 from app.data_loader import DashboardData, load_dashboard_data  # noqa: E402
 
+try:  # noqa: SIM105 - optional dependency path; app still runs without dotenv.
+    from dotenv import load_dotenv  # noqa: E402
+except ImportError:  # pragma: no cover - requirements includes it for full setup.
+    load_dotenv = None  # type: ignore[assignment]
+
+if load_dotenv is not None:
+    load_dotenv(ROOT / ".env")
+
 
 def render() -> None:
     st.set_page_config(page_title="Amazon Hybrid RecSys", layout="wide")
@@ -245,10 +253,13 @@ def _render_item_explorer(data: DashboardData) -> None:
 RECOMMENDATION_METHOD_LABELS = (
     "Popularity",
     "SVD",
+    "Content enriched",
+    "Calibrated hybrid",
     "Item-KNN cosine",
     "Item-KNN pearson",
     "Item-KNN msd",
     "LightGCN checkpoint",
+    "GraphSAGE MSE checkpoint",
     "LLM hybrid — profile mode",
     "LLM hybrid — query mode",
 )
@@ -307,6 +318,57 @@ def _cached_fitted_knn(processed_dir_str: str, dataset: str, sim_name: str):
 
 
 @st.cache_resource(show_spinner=False)
+def _cached_fitted_content_enriched(processed_dir_str: str, dataset: str):
+    """Fit the enriched content model once per dataset."""
+    from src.data.config import load_config
+    from src.models.content_enriched import ContentEnrichedRecommender
+    from src.models.embedding import build_embedder
+
+    artifacts = _cached_local_artifacts(processed_dir_str, dataset)
+    if not artifacts.available:
+        return None
+    config = load_config("config/config.yaml")
+    advanced = config.get("advanced_features", {})
+    embedder = build_embedder(config)
+    model = ContentEnrichedRecommender(
+        embedder,
+        generic_roots=advanced.get("generic_category_roots", []),
+        max_vocab=int(advanced.get("category_vocab_max", 256)),
+        min_doc_freq=int(advanced.get("category_min_doc_freq", 5)),
+        cache_dir=Path(processed_dir_str) / dataset / "advanced_features" / "title_desc_embeddings",
+        review_features_dir=Path(processed_dir_str) / dataset / "advanced_features",
+    )
+    model.fit(artifacts.train, artifacts.metadata)
+    return model
+
+
+@st.cache_resource(show_spinner=False)
+def _cached_fitted_calibrated_hybrid(processed_dir_str: str, dataset: str):
+    """Fit calibrated hybrid once per dataset for qualitative comparison."""
+    from src.data.config import load_config
+    from src.models.calibrated_hybrid import CalibratedHybrid
+    from src.models.cf import SVDRecommender
+
+    artifacts = _cached_local_artifacts(processed_dir_str, dataset)
+    if not artifacts.available:
+        return None
+    config = load_config("config/config.yaml")
+    content = _cached_fitted_content_enriched(processed_dir_str, dataset)
+    if content is None:
+        return None
+    tuning = config.get("hybrid", {}).get("tuning", {})
+    model = CalibratedHybrid(
+        SVDRecommender(n_factors=32, n_epochs=10, random_state=42),
+        content,
+        alpha=float(config.get("hybrid", {}).get("alpha", 0.5)),
+        calibration_max_rows=tuning.get("calibration_max_rows"),
+        progress=False,
+    )
+    model.fit(artifacts.train, artifacts.metadata)
+    return model
+
+
+@st.cache_resource(show_spinner=False)
 def _cached_lightgcn_scorer(processed_dir_str: str, dataset: str, checkpoint_str: str):
     """Load the LightGCN scorer once per checkpoint file; cache the callable."""
     from src.reasoning.candidates import load_lightgcn_from_checkpoint
@@ -321,11 +383,58 @@ def _cached_lightgcn_scorer(processed_dir_str: str, dataset: str, checkpoint_str
         return None
 
 
+@st.cache_resource(show_spinner=False)
+def _cached_graphsage_model(processed_dir_str: str, dataset: str, checkpoint_str: str):
+    """Load a GraphSAGE MSE checkpoint once per dataset/checkpoint."""
+    from src.data.config import load_config
+    from src.models.embedding import build_embedder
+    from src.models.graphsage import GraphSAGERecommender
+
+    artifacts = _cached_local_artifacts(processed_dir_str, dataset)
+    ckpt = Path(checkpoint_str)
+    if not artifacts.available or not ckpt.is_file():
+        return None
+    config = load_config("config/config.yaml")
+    graph = config.get("graph", {})
+    advanced = config.get("advanced_features", {})
+    embedder = build_embedder(config)
+    model = GraphSAGERecommender(
+        embedder=embedder,
+        generic_roots=advanced.get("generic_category_roots", []),
+        max_vocab=int(advanced.get("category_vocab_max", 256)),
+        min_doc_freq=int(advanced.get("category_min_doc_freq", 5)),
+        hidden_dim=int(graph.get("embedding_dim", 64)),
+        n_layers=int(graph.get("n_layers", 2)),
+        epochs=0,
+        lr=float(graph.get("lr", 0.005)),
+        weight_decay=float(graph.get("weight_decay", 0.0)),
+        batch_size=int(graph.get("batch_size", 1024)),
+        seed=int(graph.get("seed", 42)),
+        device=str(graph.get("device", "auto")),
+        cache_dir=Path(processed_dir_str) / dataset / "advanced_features" / "title_desc_embeddings",
+        review_features_dir=Path(processed_dir_str) / dataset / "advanced_features",
+        progress=False,
+    )
+    try:
+        model.prepare_for_checkpoint(artifacts.train, artifacts.metadata)
+        model.load_checkpoint(ckpt)
+    except Exception:
+        return None
+    return model
+
+
+def _first_existing_checkpoint(base: Path, names: tuple[str, ...]) -> Path:
+    for name in names:
+        candidate = base / name
+        if candidate.is_file():
+            return candidate
+    return base / names[0]
+
+
 def _render_recommendations(data, *, processed_dir: Path) -> None:
     import pandas as pd
 
     from app.recommender_runner import (
-        DEFAULT_CANDIDATE_POOL_SIZE,
         representative_users,
         run_knn,
         run_lightgcn_checkpoint,
@@ -371,6 +480,18 @@ def _render_recommendations(data, *, processed_dir: Path) -> None:
         user_id = st.selectbox("User", users, index=0)
         method = st.selectbox("Method", RECOMMENDATION_METHOD_LABELS, index=0)
         top_k = st.slider("Top-K", min_value=1, max_value=20, value=5)
+        candidate_pool_size = st.slider(
+            "Candidate pool",
+            min_value=100,
+            max_value=5000,
+            value=1000,
+            step=100,
+            help=(
+                "SVD, KNN, content, hybrid, and graph checkpoints score this "
+                "many unseen candidates before taking Top-K. Larger pools are "
+                "slower but reduce popularity-pool bias."
+            ),
+        )
         seed_asin = st.text_input("Optional seed parent_asin", value="").strip()
         free_text_query = st.text_input(
             "Optional query (LLM query mode only)", value=""
@@ -435,9 +556,47 @@ def _render_recommendations(data, *, processed_dir: Path) -> None:
                 metadata=artifacts.metadata,
                 user_id=user_id,
                 top_k=top_k,
-                candidate_pool_size=DEFAULT_CANDIDATE_POOL_SIZE,
+                candidate_pool_size=candidate_pool_size,
                 seed_asin=seed_asin or None,
                 svd_factory=lambda: _PreFitWrapper(cached_svd),
+            )
+        elif method == "Content enriched":
+            from app.recommender_runner import run_fitted_recommender
+
+            cached_content = _cached_fitted_content_enriched(str(processed_dir), data.dataset)
+            if cached_content is None:
+                st.info("Content enriched unavailable.")
+                return
+            rows = run_fitted_recommender(
+                model=cached_content,
+                train=artifacts.train,
+                metadata=artifacts.metadata,
+                user_id=user_id,
+                top_k=top_k,
+                method="content_enriched",
+                score_field="semantic_score",
+                score_sources=["content_enriched"],
+                candidate_pool_size=candidate_pool_size,
+                seed_asin=seed_asin or None,
+            )
+        elif method == "Calibrated hybrid":
+            from app.recommender_runner import run_fitted_recommender
+
+            cached_hybrid = _cached_fitted_calibrated_hybrid(str(processed_dir), data.dataset)
+            if cached_hybrid is None:
+                st.info("Calibrated hybrid unavailable.")
+                return
+            rows = run_fitted_recommender(
+                model=cached_hybrid,
+                train=artifacts.train,
+                metadata=artifacts.metadata,
+                user_id=user_id,
+                top_k=top_k,
+                method="calibrated_hybrid",
+                score_field="hybrid_score",
+                score_sources=["svd", "content_enriched"],
+                candidate_pool_size=candidate_pool_size,
+                seed_asin=seed_asin or None,
             )
         elif method.startswith("Item-KNN"):
             sim_name = method.split()[-1]
@@ -451,7 +610,7 @@ def _render_recommendations(data, *, processed_dir: Path) -> None:
                 user_id=user_id,
                 top_k=top_k,
                 sim_name=sim_name,
-                candidate_pool_size=DEFAULT_CANDIDATE_POOL_SIZE,
+                candidate_pool_size=candidate_pool_size,
                 seed_asin=seed_asin or None,
                 knn_factory=lambda _name: _PreFitWrapper(cached_knn),
             )
@@ -478,6 +637,7 @@ def _render_recommendations(data, *, processed_dir: Path) -> None:
                     checkpoint_path=ckpt,
                     loader=None,
                     config={},
+                    candidate_pool_size=candidate_pool_size,
                     seed_asin=seed_asin or None,
                 )
             else:
@@ -489,10 +649,36 @@ def _render_recommendations(data, *, processed_dir: Path) -> None:
                     checkpoint_path=ckpt,
                     loader=_scorer_loader,
                     config={},
+                    candidate_pool_size=candidate_pool_size,
                     seed_asin=seed_asin or None,
                 )
             rows = result.rows
             warning = result.warning
+        elif method == "GraphSAGE MSE checkpoint":
+            from app.recommender_runner import run_fitted_recommender
+
+            ckpt = _first_existing_checkpoint(
+                processed_dir / data.dataset / "graph_checkpoints",
+                ("graphsage_20ep.pt", "graphsage.pt"),
+            )
+            cached_graphsage = _cached_graphsage_model(str(processed_dir), data.dataset, str(ckpt))
+            if cached_graphsage is None:
+                st.warning(
+                    f"GraphSAGE checkpoint not found or could not be loaded at {ckpt}."
+                )
+                return
+            rows = run_fitted_recommender(
+                model=cached_graphsage,
+                train=artifacts.train,
+                metadata=artifacts.metadata,
+                user_id=user_id,
+                top_k=top_k,
+                method="graphsage_mse",
+                score_field="hybrid_score",
+                score_sources=["graphsage_mse"],
+                candidate_pool_size=candidate_pool_size,
+                seed_asin=seed_asin or None,
+            )
         elif method.startswith("LLM hybrid"):
             mode = "profile" if "profile" in method else "query"
             llm_result = run_llm_hybrid(

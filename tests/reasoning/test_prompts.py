@@ -106,3 +106,33 @@ def test_prompt_lists_effective_weights():
     )
     assert "0.75" in out["user"]
     assert "0.25" in out["user"]
+
+
+def test_prompt_uses_compact_evidence_view():
+    raw = _sample_payload()[0].model_dump(mode="json")
+    raw["candidate"]["title"] = "X" * 300
+    raw["candidate"]["categories"] = [f"cat{i}" for i in range(20)]
+    raw["user_evidence"]["high_rated_items"] = [
+        {
+            "parent_asin": f"H{i}",
+            "title": "Y" * 300,
+            "rating": 5.0,
+            "categories": [f"hcat{j}" for j in range(20)],
+        }
+        for i in range(10)
+    ]
+    payload = [RecommendationEvidence.model_validate(raw)]
+
+    out = build_prompt(
+        user_id="U1",
+        query=None,
+        evidence_payloads=payload,
+        effective_weights={"graph": 1.0},
+    )
+
+    assert len(out["user"]) < 3000
+    assert "XXXX" in out["user"]
+    assert "H4" in out["user"]
+    assert "H5" not in out["user"]
+    assert "cat5" in out["user"]
+    assert "cat6" not in out["user"]

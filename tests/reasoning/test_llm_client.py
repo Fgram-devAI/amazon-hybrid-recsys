@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import requests
 
 from src.reasoning.llm_client import (
     GroqAdapter,
@@ -160,6 +161,32 @@ def test_call_llm_handles_response_with_wrong_shape():
     assert result["parsed_json"] is None
     assert isinstance(result["validation_error"], str)
     assert "summary" in result["validation_error"].lower()
+
+
+def test_call_llm_handles_provider_http_error():
+    class _FailingAdapter:
+        def chat(self, **kwargs):  # noqa: ARG002
+            raise requests.HTTPError("413 Client Error: Payload Too Large")
+
+    result = call_llm(
+        adapter=_FailingAdapter(),
+        prompt={"system": "S", "user": "U"},
+        config=LLMConfig(
+            provider="groq",
+            model="x",
+            api_key="key",
+            base_url="https://example/v1",
+            temperature=0.2,
+            max_tokens=10,
+            timeout_seconds=5,
+        ),
+        dry_run=False,
+    )
+
+    assert result["mode"] == "live"
+    assert result["text"] is None
+    assert result["parsed_json"] is None
+    assert "Payload Too Large" in result["validation_error"]
 
 
 def test_groq_adapter_calls_chat_completions(monkeypatch):
