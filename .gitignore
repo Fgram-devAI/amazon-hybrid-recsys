@@ -56,3 +56,4 @@ skills-lock.json
 # --- Reasoning layer (feat/llm-hybrid-recommender) ---
 /data/processed/**/llm_outputs/
 /data/processed/**/reasoning_queries/
+/.cache/
