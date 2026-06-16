@@ -9,6 +9,11 @@ import json
 
 from src.reasoning.schemas import RecommendationEvidence
 
+_MAX_TITLE_CHARS = 160
+_MAX_CATEGORIES = 6
+_MAX_HISTORY_ITEMS = 5
+_MAX_SEMANTIC_NEIGHBORS = 3
+
 _SYSTEM_PROMPT = """You are a recommendation explanation assistant.
 
 Rules:
@@ -37,6 +42,67 @@ Rules:
 """
 
 
+def _short_text(value: str, *, max_chars: int = _MAX_TITLE_CHARS) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def _compact_evidence_payloads(
+    evidence_payloads: list[RecommendationEvidence],
+) -> list[dict]:
+    compact: list[dict] = []
+    for item in evidence_payloads:
+        dumped = item.model_dump(mode="json")
+        candidate = dumped["candidate"]
+        user_evidence = dumped.get("user_evidence") or {}
+        retrieval = dumped.get("retrieval_evidence") or {}
+        compact.append(
+            {
+                "candidate": {
+                    "parent_asin": candidate.get("parent_asin"),
+                    "title": _short_text(candidate.get("title", "")),
+                    "categories": list(candidate.get("categories") or [])[:_MAX_CATEGORIES],
+                    "scores": candidate.get("scores") or {},
+                    "score_sources": candidate.get("score_sources") or [],
+                },
+                "user_evidence": {
+                    "high_rated_items": [
+                        {
+                            "parent_asin": hist.get("parent_asin"),
+                            "title": _short_text(hist.get("title", "")),
+                            "rating": hist.get("rating"),
+                            "categories": list(hist.get("categories") or [])[:_MAX_CATEGORIES],
+                        }
+                        for hist in (user_evidence.get("high_rated_items") or [])[
+                            :_MAX_HISTORY_ITEMS
+                        ]
+                    ],
+                    "category_overlap": list(user_evidence.get("category_overlap") or [])[
+                        :_MAX_CATEGORIES
+                    ],
+                    "graph_evidence_available": bool(
+                        user_evidence.get("graph_evidence_available")
+                    ),
+                },
+                "retrieval_evidence": {
+                    "semantic_neighbors": [
+                        {
+                            "parent_asin": neighbor.get("parent_asin"),
+                            "title": _short_text(neighbor.get("title", "")),
+                            "distance": neighbor.get("distance"),
+                        }
+                        for neighbor in (retrieval.get("semantic_neighbors") or [])[
+                            :_MAX_SEMANTIC_NEIGHBORS
+                        ]
+                    ],
+                },
+            }
+        )
+    return compact
+
+
 def build_prompt(
     *,
     user_id: str,
@@ -58,8 +124,8 @@ def build_prompt(
         else "Semantic retrieval source: <none>\n"
     )
     evidence_json = json.dumps(
-        [item.model_dump(mode="json") for item in evidence_payloads],
-        indent=2,
+        _compact_evidence_payloads(evidence_payloads),
+        separators=(",", ":"),
     )
 
     user_prompt = (
