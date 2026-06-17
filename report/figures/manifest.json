@@ -1,0 +1,10 @@
+{
+  "dataset": "video_games",
+  "mode": "local",
+  "notes": [
+    "model_metrics: using bundled demo summary (no local model_metrics_summary.json found).",
+    "graph_analysis: using bundled demo summary.",
+    "graph_subgraph_3d: using bundled capped demo graph.",
+    "sample_items: using bundled demo items."
+  ]
+}

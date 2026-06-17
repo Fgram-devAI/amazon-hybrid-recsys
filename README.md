@@ -730,6 +730,18 @@ protocol.
 - `data/processed/<dataset>/llm_outputs/` — JSON results from live LLM runs.
 - `data/processed/<dataset>/reasoning_queries/` — saved query payloads.
 
+## Report and presentation
+
+Final assignment deliverables are kept under `report/`:
+
+- `report/Amazon_Recsyc_Assignment.pdf` — final assignment report.
+- `report/Amazon_Hybrid_RecSys_Presentation.pdf` — short presentation deck.
+- `report/beamer.tex` — Beamer source for the presentation.
+- `report/figures/` — exported figures used by the report and slides.
+
+The report and slides summarize the reproducible pipeline. Generated datasets,
+embeddings, checkpoints, metrics JSONs, and storage DBs remain gitignored.
+
 ## Roadmap
 
 - **Phase 1** — data pipeline, content-based + KNN + SVD baselines, weighted hybrid, sampled-candidate evaluation.
